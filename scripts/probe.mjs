@@ -16,10 +16,12 @@
  *   AnyRouter 不同模型族走的接口不一样。**模型名对了但端点不对，同样返回
  *   `404 当前 API 不支持所选模型`** —— 看起来像模型不存在，其实是打错了接口。
  *   实测：
- *     Claude  → POST /v1/messages          （Anthropic 格式，x-api-key 头）
+ *     Claude  → POST /v1/messages          （Anthropic 格式，x-api-key 头
+ *                                            + anthropic-beta: context-1m-2025-08-07）
  *     GPT     → POST /v1/responses         （OpenAI 新格式，input 而不是 messages）
  *     Gemini  → POST /v1/chat/completions  （OpenAI 经典格式）
- *   改模型前先用 `GET /v1/models` 核对一遍，别再照抄社区帖子里的模型名。
+ *   改模型前先用 `GET /v1/models` 核对一遍，**而且要用 --dry 真打一次** ——
+ *   列表里有不等于真能调（gemini-2.5-flash 不在列表里、gpt-5-codex 在列表里但 404）。
  *
  * 注意：探测用的是你自己的账号和额度，保持低频，别给人家添负担。
  */
@@ -30,19 +32,22 @@ const INGEST_SECRET = process.env.INGEST_SECRET;
 const DRY = process.argv.includes('--dry');
 const TIMEOUT_MS = Number(process.env.PROBE_TIMEOUT_MS ?? 15000);
 
+/**
+ * ⚠️ 这份 ROUTES 必须和 lib/config.ts 里的 ROUTES 完全一致。
+ * 只写实测过能用的地址 —— 2026-09-22 曾把三条错地址（404 / 欠费 / 连不上）
+ * 当成正经线路探测了两轮，页面上白显示了一堆红。
+ */
 const ROUTES = [
   { id: 'main', name: '主站直连', baseUrl: 'https://anyrouter.top' },
-  { id: 'cn-a', name: '大陆优化 A', baseUrl: 'https://pmpjfbhq.cn-nb1.rainapp.top' },
-  { id: 'cn-b', name: '大陆优化 B', baseUrl: 'https://a-ocnfniawgw.cn-shanghai.fcapp.run' },
-  { id: 'cdn', name: 'CDN 备用', baseUrl: 'https://q.quuvv.cn' },
 ];
 
 // 每个分组只用第一个模型探测，控制请求量。
 // 候选写在数组里是为了留个换模型的余地，不是每个都发。
+// ⚠️ 只放实测能打通的模型 —— 列表里有 ≠ 真能调，见 lib/config.ts 的说明。
 const GROUPS = [
-  { id: 'claude', api: 'messages', models: ['claude-3-5-haiku-20241022'] },
+  { id: 'claude', api: 'messages', models: ['claude-sonnet-4-5-20250929'] },
   { id: 'gpt', api: 'responses', models: ['gpt-6-astra'] },
-  { id: 'gemini', api: 'chat', models: ['gemini-2.5-flash'] },
+  { id: 'gemini', api: 'chat', models: ['gemini-2.5-pro'] },
 ];
 
 if (!KEY) {
@@ -58,9 +63,17 @@ function normalize(baseUrl) {
 function classify(status, text) {
   // 欠费要单独认出来 —— 它是「这条线路暂时别用了」，不是普通的鉴权失败
   if (/in debt|欠费/i.test(text)) return 'debt';
+  // 「请启用 1m 上下文」是配置问题，不是故障，得单独报出来，
+  // 否则会混在 400 里被当成上游抽风
+  if (/1m\s*上下文/i.test(text)) return 'context';
   if (status === 401 || status === 403) return 'auth';
   if (status === 404) return 'not_found';
-  if (status === 429) return 'rate_limit';
+  // 429 有两种，含义完全相反，必须分开：
+  //   真·限流  → 改客户端（降并发、关自动重试）
+  //   渠道打满 → 只能等，改什么都没用
+  // 这个站过载时返回的正是 `429 + {"message":"Service Unavailable"}`，
+  // 一律归成 rate_limit 会给出错误的建议（2026-09-22 实测）。
+  if (status === 429) return /service unavailable|负载|overload/i.test(text) ? 'overload' : 'rate_limit';
   if (status === 502) return 'bad_gateway';
   if (status === 504) return 'timeout';
   if (status >= 500) return 'overload';
@@ -68,7 +81,14 @@ function classify(status, text) {
   return 'unknown';
 }
 
-/** 按分组声明的 api 格式，构造这次探测的路径 / 请求头 / 请求体 */
+/**
+ * 按分组声明的 api 格式，构造这次探测的路径 / 请求头 / 请求体。
+ *
+ * ⚠️ Claude 必须带 `anthropic-beta: context-1m-2025-08-07`。
+ * 2026-09-22 实测：不带这个头，所有 Claude 模型都返回
+ * `400 1m 上下文已经全量可用，请启用 1m 上下文后重试`（3/3 稳定复现）；
+ * 带上之后错误才变成真正的上游状态码（当时是 503 过载）。
+ */
 function buildRequest(api, model) {
   if (api === 'messages') {
     return {
@@ -76,6 +96,7 @@ function buildRequest(api, model) {
       headers: {
         'x-api-key': KEY,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'context-1m-2025-08-07',
         'Content-Type': 'application/json',
       },
       body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },

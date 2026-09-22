@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic';
  * 鉴权走 INGEST_SECRET 请求头 —— 这个接口会写库，别裸奔。
  */
 
-const VALID_ROUTES = new Set(['main', 'cn-a', 'cn-b', 'cdn']);
+/** 只接受这里列出的线路 id —— 和 lib/config.ts 的 ROUTES 保持一致 */
+const VALID_ROUTES = new Set(['main']);
 
 function sanitize(raw: unknown): ProbeInput | null {
   if (!raw || typeof raw !== 'object') return null;

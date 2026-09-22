@@ -29,7 +29,7 @@ const CONCLUSION_TIP: Record<string, { level: 'ok' | 'warn' | 'bad'; title: stri
   network: {
     level: 'bad',
     title: '卡在第一步：连不上服务器',
-    body: '这跟你的 key 和模型名都没关系。主站直连必须开代理；如果不想开代理，换成大陆优化线路再试一次。',
+    body: '这跟你的 key 和模型名都没关系。主站直连必须科学上网 —— 确认代理开着，而且规则覆盖了这个域名（只开代理但规则没命中，一样连不上）。国内直连会被超时或重置。',
   },
   auth: {
     level: 'bad',
@@ -39,7 +39,12 @@ const CONCLUSION_TIP: Record<string, { level: 'ok' | 'warn' | 'bad'; title: stri
   model: {
     level: 'bad',
     title: '卡在第三步：模型名或端点不对',
-    body: 'key 是好的，但这个模型走不通。两种可能：一是模型名在列表里找不到（去站内模型列表复制准确的名字，注意大小写和日期后缀）；二是端点选错了 —— 这类站 Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions，用错了同样报「不支持所选模型」。上面每一步的详情里写了本次实际打的地址，照着改。',
+    body: 'key 是好的，但这个模型走不通。三种可能：一是模型名在列表里找不到（去站内模型列表复制准确的名字，注意大小写和日期后缀）；二是端点选错了 —— 这类站 Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions，用错了同样报「不支持所选模型」；三是这个模型虽然在列表里、但上游根本没接（有的模型挂着是空壳），换个模型对比一下就知道。上面每一步的详情里写了本次实际打的地址，照着改。',
+  },
+  context: {
+    level: 'bad',
+    title: 'Claude 模型：需要先启用 1M 上下文',
+    body: '这不是故障，也不是 key 的问题。这个站要求 Claude 请求显式声明使用 1M 上下文窗口，没声明就直接拒。在客户端里加上请求头 anthropic-beta: context-1m-2025-08-07 即可；Cherry Studio 这类客户端在模型设置里勾「1M 上下文」会自动带上。下面的 curl 已经带了这个头，可以直接对照。',
   },
   upstream: {
     level: 'warn',
@@ -54,7 +59,7 @@ const CONCLUSION_TIP: Record<string, { level: 'ok' | 'warn' | 'bad'; title: stri
 };
 
 export default function DiagnosePanel() {
-  const [baseUrl, setBaseUrl] = useState(ROUTES[1].baseUrl);
+  const [baseUrl, setBaseUrl] = useState(ROUTES[0].baseUrl);
   const [apiKey, setApiKey] = useState('');
   const [model, setModel] = useState('');
   const [busy, setBusy] = useState(false);
@@ -91,7 +96,8 @@ export default function DiagnosePanel() {
 
   // 手动验证用的 curl 也要按模型族换端点 —— 否则用户照着这条命令敲，
   // 明明配置是对的也会拿到「不支持所选模型」，反而被带偏。
-  const defaultModel = 'gemini-2.5-flash';
+  // Claude 那条还必须带 anthropic-beta 头，否则一律 400「请启用 1m 上下文」。
+  const defaultModel = 'gemini-2.5-pro';
   const used = (model || defaultModel).toLowerCase();
   const isClaude = used.startsWith('claude');
   const isGpt = used.startsWith('gpt') || /^o[134]/.test(used);
@@ -101,6 +107,7 @@ export default function DiagnosePanel() {
     ? `curl ${v1}/messages \\
   -H "x-api-key: $ANYROUTER_KEY" \\
   -H "anthropic-version: 2023-06-01" \\
+  -H "anthropic-beta: context-1m-2025-08-07" \\
   -H "Content-Type: application/json" \\
   -d '{"model":"${curlModel}","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'`
     : isGpt
@@ -126,19 +133,26 @@ export default function DiagnosePanel() {
           placeholder="https://anyrouter.top"
           spellCheck={false}
         />
-        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
-          {ROUTES.map((r) => (
-            <button
-              key={r.id}
-              type="button"
-              className="btn ghost sm"
-              onClick={() => setBaseUrl(r.baseUrl)}
-              title={r.note}
-            >
-              {r.name}
-            </button>
-          ))}
-        </div>
+        {/* 只有一条线路时就不用给「切换线路」按钮了，直接说清楚就行 */}
+        {ROUTES.length > 1 ? (
+          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 7 }}>
+            {ROUTES.map((r) => (
+              <button
+                key={r.id}
+                type="button"
+                className="btn ghost sm"
+                onClick={() => setBaseUrl(r.baseUrl)}
+                title={r.note}
+              >
+                {r.name}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
+            {ROUTES[0].note}
+          </div>
+        )}
         <div className="faint" style={{ fontSize: 11.5, marginTop: 6 }}>
           不用纠结结尾要不要带 /v1，两种写法自检都会自动纠正。
         </div>
@@ -163,7 +177,7 @@ export default function DiagnosePanel() {
           className="input mono"
           value={model}
           onChange={(e) => setModel(e.target.value)}
-          placeholder="claude-sonnet-4-20250514"
+          placeholder="claude-sonnet-4-5-20250929"
           spellCheck={false}
         />
       </div>

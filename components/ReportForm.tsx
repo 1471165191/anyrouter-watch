@@ -146,7 +146,7 @@ export default function ReportForm() {
           value={message}
           maxLength={300}
           onChange={(e) => setMessage(e.target.value)}
-          placeholder="例如：报「上游负载压力太大」，换大陆优化线路后正常 / 一直 502，重试也没用"
+          placeholder="例如：报「上游负载压力太大」，重试三次才通 / 一直 502，换了时段也一样"
         />
       </div>
 

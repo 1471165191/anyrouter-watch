@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import DataSourceNotice from '@/components/DataSourceNotice';
-import { LatencyChart, StatusBadge, UptimeBars, fmtAgo, fmtPct } from '@/components/viz';
+import { Heatmap, LatencyChart, StatusBadge, UptimeBars, fmtAgo, fmtDateTime, fmtDuration, fmtPct } from '@/components/viz';
 import { GROUPS } from '@/lib/config';
 import { getSiteStats } from '@/lib/stats';
 
@@ -8,11 +8,15 @@ export const dynamic = 'force-dynamic';
 
 export const metadata: Metadata = {
   title: '详细看板',
-  description: '按线路和分组拆开的可用率、延迟趋势与错误码分布。',
+  description: '按线路和分组拆开的可用率、延迟趋势、时段热力图与故障时间线。',
 };
 
+/**
+ * 2026-09-22：热力图和故障时间线从首页搬到这里。
+ * 首页只留「现在能不能用」，深挖的东西集中在这个页面。
+ */
 export default async function StatusPage() {
-  const { routes, level, source, dbOk } = await getSiteStats();
+  const { routes, heatmap, incidents, level, source, dbOk } = await getSiteStats();
 
   return (
     <div>
@@ -26,7 +30,7 @@ export default async function StatusPage() {
 
       <div className="section" style={{ marginTop: 0 }}>
         <div className="section-head">
-          <h2>分组 × 线路 矩阵</h2>
+          <h2>分组状态</h2>
           <span className="hint">数字为 24 小时可用率</span>
         </div>
         <div className="card" style={{ overflowX: 'auto' }}>
@@ -81,7 +85,20 @@ export default async function StatusPage() {
 
       <div className="section">
         <div className="section-head">
-          <h2>各线路趋势</h2>
+          <h2>什么时段最稳</h2>
+          <span className="hint">过去 24 小时逐小时可用率 · 颜色越绿越稳</span>
+        </div>
+        <div className="card">
+          <Heatmap buckets={heatmap} />
+          <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>
+            社区普遍反馈凌晨最流畅、下午到深夜最挤。绿色 ≥98% · 黄色 ≥88% · 红色 &lt;75%
+          </div>
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <h2>可用率与延迟</h2>
           <span className="hint">延迟越低越好，红色竖线是探测失败</span>
         </div>
         <div style={{ display: 'grid', gap: 14 }}>
@@ -131,6 +148,46 @@ export default async function StatusPage() {
               )}
             </div>
           ))}
+        </div>
+      </div>
+
+      <div className="section">
+        <div className="section-head">
+          <h2>故障时间线</h2>
+          <span className="hint">连续 15 分钟以上探测失败才会计入</span>
+        </div>
+        <div className="card">
+          {incidents.length === 0 ? (
+            <div className="faint">过去 24 小时没有持续故障，运气不错。</div>
+          ) : (
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>开始时间</th>
+                  <th>线路</th>
+                  <th>分组</th>
+                  <th>持续</th>
+                  <th>表现</th>
+                </tr>
+              </thead>
+              <tbody>
+                {incidents.map((i) => (
+                  <tr key={i.id}>
+                    <td className="num">{fmtDateTime(i.startedAt)}</td>
+                    <td>{i.routeName}</td>
+                    <td>{i.groupName}</td>
+                    <td className="num">{fmtDuration(i.durationMs)}</td>
+                    <td>
+                      <span className="badge lv-down">
+                        <span className="dot lv-down" />
+                        {i.peakStatus} · {i.summary}
+                      </span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
     </div>

@@ -30,8 +30,7 @@ export default async function DiscussPage({
 
       <h1>讨论区</h1>
       <p className="sub">
-        官方既没有状态页也没有社区，遇到问题只能自己猜 —— 是站点挂了，还是我配置错了。
-        在这里问一句、答一句，后面来的人就能少猜一次。
+        官方既没有状态页也没有社区。在这里问一句、答一句，后面来的人就能少猜一次。
       </p>
 
       <div className="grid-2">
@@ -44,12 +43,11 @@ export default async function DiscussPage({
         </div>
         <div className="card">
           <h3>这里能帮上什么</h3>
-          <ul className="dim" style={{ fontSize: 13, paddingLeft: 18, margin: '0 0 12px' }}>
+          <ul className="acc-ul" style={{ marginTop: 0 }}>
             <li>确认「是不是只有我这样」—— 一个人挂是配置，一群人挂是站点</li>
-            <li>交换当前可用的线路和分组</li>
             <li>把踩过的坑留下来，省下别人的半小时</li>
           </ul>
-          <div className="banner-metrics" style={{ marginTop: 8 }}>
+          <div className="banner-metrics" style={{ marginTop: 14 }}>
             <div className="metric">
               <div className="metric-val">{threads.length}</div>
               <div className="metric-label">帖子</div>
@@ -71,16 +69,23 @@ export default async function DiscussPage({
           <span className="hint">按最后活跃时间排序</span>
         </div>
 
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
-          <Link href="/discuss" className={`tag ${!route ? 'tag-on' : ''}`}>
-            全部
-          </Link>
-          {ROUTES.map((r) => (
-            <Link key={r.id} href={`/discuss?route=${r.id}`} className={`tag ${route === r.id ? 'tag-on' : ''}`}>
-              {r.name}
+        {/* 只有一条线路的时候，「按线路筛选」这个控件本身就没意义了，直接不显示 */}
+        {ROUTES.length > 1 ? (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+            <Link href="/discuss" className={`tag ${!route ? 'tag-on' : ''}`}>
+              全部
             </Link>
-          ))}
-        </div>
+            {ROUTES.map((r) => (
+              <Link
+                key={r.id}
+                href={`/discuss?route=${r.id}`}
+                className={`tag ${route === r.id ? 'tag-on' : ''}`}
+              >
+                {r.name}
+              </Link>
+            ))}
+          </div>
+        ) : null}
 
         <div className="card" style={{ padding: '4px 20px' }}>
           {threads.length === 0 ? (

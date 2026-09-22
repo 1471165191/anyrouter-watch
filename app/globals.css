@@ -120,7 +120,7 @@ a:hover {
 
 /* ---------- 通用 ---------- */
 .page {
-  padding: 32px 0 64px;
+  padding: 28px 0 56px;
 }
 
 h1 {
@@ -144,7 +144,7 @@ h3 {
 
 .sub {
   color: var(--text-dim);
-  margin: 0 0 28px;
+  margin: 0 0 22px;
   font-size: 13px;
 }
 
@@ -156,14 +156,14 @@ h3 {
 }
 
 .section {
-  margin-top: 32px;
+  margin-top: 26px;
 }
 
 .section-head {
   display: flex;
   align-items: baseline;
   gap: 12px;
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 
 .section-head h2 {
@@ -699,8 +699,8 @@ h3 {
 
 .footer {
   border-top: 1px solid var(--border-soft);
-  margin-top: 48px;
-  padding: 24px 0 40px;
+  margin-top: 40px;
+  padding: 22px 0 36px;
   color: var(--text-faint);
   font-size: 12px;
   line-height: 1.8;
@@ -764,6 +764,150 @@ a.tag:hover {
 .alert.dead {
   border-color: rgba(248, 81, 73, 0.55);
   background: rgba(248, 81, 73, 0.1);
+}
+
+/* ---------- 折叠条目（排障手册） ----------
+   用原生 details/summary，不引 JS。10 条错误码 + 8 个客户端全展开是
+   一面墙，折起来之后信息一条没少，但一屏能扫完标题。 */
+.acc-list {
+  display: grid;
+  gap: 8px;
+}
+
+.acc {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.acc > summary {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 11px 14px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 13.5px;
+}
+
+.acc > summary::-webkit-details-marker {
+  display: none;
+}
+
+.acc > summary::after {
+  content: "+";
+  margin-left: auto;
+  flex: none;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 14px;
+}
+
+.acc[open] > summary::after {
+  content: "−";
+}
+
+.acc > summary:hover {
+  background: var(--surface-2);
+}
+
+.acc[open] > summary {
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.acc-key {
+  flex: none;
+  min-width: 66px;
+  font-weight: 600;
+}
+
+.acc-raw {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--text-dim);
+  font-size: 12.5px;
+}
+
+.acc-body {
+  padding: 14px;
+  font-size: 13px;
+}
+
+.acc-label {
+  margin-bottom: 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+
+.acc-ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--text-dim);
+}
+
+/* ---------- 首页底部快捷入口 ----------
+   原来是三张和正文一样大的卡片，抢注意力。现在压成一行链接。 */
+.quick-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(215px, 1fr));
+  gap: 2px 20px;
+  padding: 8px 10px;
+}
+
+.quick-links a {
+  display: block;
+  padding: 10px;
+  border-radius: var(--radius);
+  color: inherit;
+}
+
+.quick-links a:hover {
+  background: var(--surface-2);
+  text-decoration: none;
+}
+
+.quick-links b {
+  display: block;
+  margin-bottom: 2px;
+  font-size: 13.5px;
+  color: var(--accent);
+}
+
+.quick-links span {
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text-faint);
+}
+
+/* ---------- 自检页的坑位列表 ----------
+   7 个方块卡 → 一张卡里的 7 条有序条目。 */
+.pit-list {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 22px;
+}
+
+.pit-list li {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--text-dim);
+}
+
+.pit-list li b {
+  display: block;
+  margin-bottom: 1px;
+  color: var(--text);
+}
+
+.pit-list li::marker {
+  color: var(--text-faint);
 }
 
 @media (max-width: 640px) {

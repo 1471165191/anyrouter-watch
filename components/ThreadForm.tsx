@@ -54,11 +54,10 @@ export default function ThreadForm() {
   return (
     <div>
       <div className="field">
-        <label>标题（必填）— 一句话说清楚问题</label>
+        <label>标题（可留空，留空就取正文第一行）</label>
         <input
           className="input"
           value={title}
-          maxLength={120}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="例如：claude 分组下午开始一直 502，有人一样吗"
         />

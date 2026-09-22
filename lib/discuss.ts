@@ -97,21 +97,22 @@ const DEMO_THREADS: { title: string; body: string; nick: string; routeId: string
     groupId: null,
   },
   {
-    title: '大陆优化 A 今天特别稳，主站直连反而一直超时',
+    title: '主站直连下午一直超时，是站点的问题还是我的代理？',
     body:
-      '同一个网络环境测的：主站直连必须挂代理，代理一断就全超时；\n' +
-      '换成大陆优化 A 之后不用代理也很快。是不是说明我代理有问题？',
+      '同一个代理，早上还一切正常，下午开始全是超时。\n' +
+      '换了两个节点都一样，但网页能打开官网。是上游在抽风吗？',
     nick: '路过的',
-    routeId: 'cn-a',
+    routeId: 'main',
     groupId: null,
   },
   {
-    title: '提醒一下：用大陆优化线路的时候一定要把代理关掉',
+    title: '提醒一下：代理规则一定要覆盖 api 域名，只开代理没用',
     body:
-      '代理开着 + 大陆优化线路 = 必挂，这个组合我试了三次都不行。\n' +
-      '两条线路的「要不要代理」是反的，混着用就是不通。',
+      '我之前只开了代理、规则用的是「大陆白名单」，结果 anyrouter 的域名根本没走代理，\n' +
+      '一直报连接被重置，查了半天才发现是规则的事。\n' +
+      '改成全局或者手动把域名加进规则，立刻就通了。',
     nick: '老李',
-    routeId: 'cn-a',
+    routeId: 'main',
     groupId: null,
   },
 ];
@@ -119,12 +120,12 @@ const DEMO_THREADS: { title: string; body: string; nick: string; routeId: string
 const DEMO_REPLIES: string[][] = [
   [
     '我这边也是，claude 分组从两点多开始就不行了，报「上游负载压力太大」。',
-    '同挂。切到大陆优化 B 能出字，但是很慢。',
+    '同挂，换个时段会好一些，晚上十一点之后明显流畅。',
     '刚试了一下能用了，可能刚才是抽风，你再等等。',
   ],
   ['学到了，我也是复制的时候带空格，找了半天。', 'base_url 带不带 /v1 确实是个坑，建议专门写一篇。'],
-  ['代理有问题的可能性大。你试试关掉代理直连大陆优化线路，正常的话就是代理的事。'],
-  ['对，这个我踩过，两条线路的代理要求是反的。'],
+  ['大概率是上游负载，下午到深夜最挤。等一等或者缩短上下文再试。'],
+  ['对，这个我踩过。只开代理不等于走了代理，规则没命中照样直连。'],
 ];
 
 function seedThreads(): Thread[] {
@@ -242,7 +243,9 @@ export interface ThreadInput {
 }
 
 export async function createThread(input: ThreadInput): Promise<Thread> {
-  const title = input.title.trim().slice(0, 120);
+  // 标题不做长度校验（见 /api/threads 的说明）。这里只留一个纯排版用的
+  // 上限：再长列表就没法看了。300 字对标题来说等于不设限。
+  const title = input.title.trim().slice(0, 300);
   const body = input.body.trim().slice(0, 4000);
   const nick = input.nick?.trim().slice(0, 24) || null;
 

@@ -37,9 +37,15 @@ function normalizeBase(raw: string): { root: string; v1: string } {
  *   其实是打错了接口。如果自检一律打 /chat/completions，
  *   用 Claude 或 GPT 模型的用户会被误判成「模型名写错了」，越查越远。
  *
- *   Claude  → POST /v1/messages         （Anthropic 格式，x-api-key 头）
+ *   Claude  → POST /v1/messages         （Anthropic 格式，x-api-key 头
+ *                                        + anthropic-beta: context-1m-2025-08-07）
  *   GPT     → POST /v1/responses        （OpenAI 新格式，input 而非 messages）
  *   其它    → POST /v1/chat/completions （OpenAI 经典格式）
+ *
+ * ⚠️ Claude 那个 anthropic-beta 头不能省。2026-09-22 实测 3/3：
+ *   不带它，任何 Claude 模型都直接回 `400 1m 上下文已经全量可用，请启用 1m 上下文后重试`，
+ *   带上之后才轮到上游说话。用户客户端里如果没配这个头，也会撞同一堵墙 ——
+ *   所以下面的真实调用如果拿到这个 400，要单独报成 context 而不是「上游故障」。
  */
 function pickEndpoint(model: string, apiKey: string): { path: string; label: string; headers: Record<string, string>; body: unknown } {
   const m = model.toLowerCase();
@@ -51,6 +57,7 @@ function pickEndpoint(model: string, apiKey: string): { path: string; label: str
       headers: {
         'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
+        'anthropic-beta': 'context-1m-2025-08-07',
         'Content-Type': 'application/json',
       },
       body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },
@@ -121,7 +128,8 @@ export async function POST(req: Request) {
     steps.push({
       name: '网络连通',
       ok: false,
-      detail: `连不上 ${v1}（${conn.err}）。主站直连需要科学上网；如果没开代理，换「大陆优化」线路再试。`,
+      detail: `连不上 ${v1}（${conn.err}）。主站直连必须科学上网 —— 先确认代理开着，且规则覆盖了这个域名。` +
+        '国内直连会被超时或重置，这不是 key 的问题。',
       latencyMs: conn.ms,
     });
     return NextResponse.json({ steps, conclusion: 'network', v1 });
@@ -202,7 +210,7 @@ export async function POST(req: Request) {
 
   // 第三步：真打一次补全，这才算真的能用。
   // 端点按模型族选 —— 选错了会拿到一个误导性的 404，见 pickEndpoint 的注释。
-  const target = model || 'gpt-4o-mini';
+  const target = model || 'gemini-2.5-pro';
   const ep = pickEndpoint(target, apiKey);
 
   const chat = await timed(`${v1}${ep.path}`, {
@@ -240,11 +248,28 @@ export async function POST(req: Request) {
       steps.push({
         name: '真实调用',
         ok: false,
-        detail: `HTTP ${chat.res.status} — ${msg.slice(0, 160)}。这类站不同模型族走的端点不一样：Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions。本次打的是 ${ep.label}。换对端点再试，别急着改模型名。`,
+        detail: `HTTP ${chat.res.status} — ${msg.slice(0, 160)}。这类站不同模型族走的端点不一样：Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions。本次打的是 ${ep.label}。换对端点再试，别急着改模型名。另外，模型名在 /models 列表里也不代表真的能调（有的模型挂着但上游没接），换个模型对比一下。`,
         httpStatus: chat.res.status,
         latencyMs: chat.ms,
       });
       return NextResponse.json({ steps, conclusion: 'model', v1, modelCount, endpoint: ep.label });
+    }
+
+    // 「请启用 1m 上下文」是 Claude 专属的一道门槛，跟故障完全不是一回事。
+    // 服务端要求客户端显式声明使用 1M 上下文窗口，没声明就直接拒。
+    if (/1m\s*上下文/i.test(msg)) {
+      steps.push({
+        name: '真实调用',
+        ok: false,
+        detail:
+          `HTTP ${chat.res.status} — ${msg.slice(0, 160)}。` +
+          '这是 Claude 模型的额外要求：服务端要你显式启用 1M 上下文，没启用就直接拒，跟 key、余额、负载都无关。' +
+          '客户端里在 Anthropic 请求头加上 `anthropic-beta: context-1m-2025-08-07` 即可；' +
+          '有些客户端（如 Cherry Studio）在模型设置里勾选「1M 上下文」也会自动带上这个头。',
+        httpStatus: chat.res.status,
+        latencyMs: chat.ms,
+      });
+      return NextResponse.json({ steps, conclusion: 'context', v1, modelCount, endpoint: ep.label });
     }
 
     const hint =

@@ -2,26 +2,41 @@ import Link from 'next/link';
 import DataSourceNotice from '@/components/DataSourceNotice';
 import ReportFeed from '@/components/ReportFeed';
 import ReportForm from '@/components/ReportForm';
-import { Heatmap, StatusBadge, UptimeBars, fmtAgo, fmtDateTime, fmtDuration, fmtPct } from '@/components/viz';
-import { SITE } from '@/lib/config';
-import { loadRecentThreads } from '@/lib/discuss';
+import { StatusBadge, UptimeBars, fmtAgo, fmtDateTime, fmtPct } from '@/components/viz';
+import { SITE, GROUPS } from '@/lib/config';
 import { getSiteStats } from '@/lib/stats';
 import { loadReports, summarize } from '@/lib/store';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * 首页 = 4 个板块，不再多。
+ *
+ * 2026-09-22 精简前是 7 个（状态横幅 / 线路卡片 / 热力图 / 反馈表单+流水 /
+ * 讨论列表 / 故障表 / 工具卡），从上滚到底要滑很久，重点全被稀释了。
+ * 现在的取舍：
+ *   · 热力图和故障表 → 移进 /status（它们属于「想深挖时才看」的东西）
+ *   · 用户反馈 + 讨论 → 合成一个板块，本来就是同一件事的两面
+ *   · 工具入口 → 从三张大卡压成一行链接
+ * 首页只回答一个问题：现在能不能用。
+ */
+
 const BANNER_TITLE = {
-  ok: '全部线路正常',
-  degraded: '部分线路波动',
-  down: '线路大面积不可用',
+  ok: '线路正常',
+  degraded: '线路有波动',
+  down: '线路不可用',
 } as const;
 
 export default async function HomePage() {
-  const { routes, heatmap, level, uptime24h, incidents, recommended, source, dbOk, lastProbeAt } =
+  const { routes, level, uptime24h, recommended, source, dbOk, lastProbeAt, sampleRows } =
     await getSiteStats();
-  const { reports } = await loadReports(14);
+  const { reports } = await loadReports(8);
   const summary = summarize(reports);
-  const { threads: recentThreads } = await loadRecentThreads(4);
+
+  // 样本太少时别把百分比当结论看。
+  // 站点刚上线时库里可能只有一两轮数据，全失败就是「0.0%」，看着像站点挂了，
+  // 其实只是没攒够样本。这里明确说一句。
+  const thinSample = source === 'db' && sampleRows < routes.length * GROUPS.length * 12;
 
   return (
     <div>
@@ -34,8 +49,9 @@ export default async function HomePage() {
             {BANNER_TITLE[level]}
           </p>
           <p className="banner-note">
-            {SITE.name} · 每 5 分钟独立探测一次
-            {lastProbeAt ? ` · 最后更新 ${fmtAgo(lastProbeAt)}（${fmtDateTime(lastProbeAt)}）` : ''}
+            {SITE.name} · 每 5 分钟独立探测
+            {lastProbeAt ? ` · 更新于 ${fmtAgo(lastProbeAt)}` : ''}
+            {thinSample ? ` · 样本还在积累（当前 ${sampleRows} 条），百分比仅供参考` : ''}
           </p>
         </div>
         <div className="banner-metrics">
@@ -47,30 +63,23 @@ export default async function HomePage() {
             <div className="metric-val">{recommended.avgLatency}ms</div>
             <div className="metric-label">平均延迟</div>
           </div>
-          <div className="metric">
-            <div className={`metric-val lv-${summary.okRate >= 0.8 ? 'ok' : summary.okRate >= 0.5 ? 'degraded' : 'down'}`}>
-              {summary.total ? fmtPct(summary.okRate, 0) : '—'}
-            </div>
-            <div className="metric-label">用户反馈正常率</div>
-          </div>
         </div>
       </div>
 
       <div className="section">
         <div className="section-head">
-          <h2>现在该用哪条线路</h2>
+          <h2>线路状态</h2>
           <span className="hint">
-            推荐 <b style={{ color: 'var(--ok)' }}>{recommended.route.name}</b>
-            {recommended.route.needsProxy ? '（需要科学上网）' : '（国内可直连）'}
+            上次探测 {lastProbeAt ? fmtDateTime(lastProbeAt) : '—'} · 明细见{' '}
+            <Link href="/status">详细看板</Link>
           </span>
         </div>
         <div className="grid-2">
           {routes.map((r) => (
-            <div key={r.route.id} className={`route-card ${r.route.id === recommended.route.id ? 'rec' : ''}`}>
+            <div key={r.route.id} className="route-card">
               <div className="route-top">
                 <span className="route-name">{r.route.name}</span>
                 <StatusBadge level={r.current} />
-                {r.route.id === recommended.route.id ? <span className="badge lv-ok">推荐</span> : null}
                 <span className="badge neutral" style={{ marginLeft: 'auto' }}>
                   {r.route.needsProxy ? '需代理' : '免代理'}
                 </span>
@@ -78,8 +87,8 @@ export default async function HomePage() {
               <div className="route-url">{r.route.baseUrl}</div>
               {r.likelyDead ? (
                 <div className="alert dead" style={{ fontSize: 12.5, padding: '8px 10px' }}>
-                  这条地址连续探测全部失败，多半已经换过了 —— 别在这儿等，
-                  去<a href="/discuss">讨论区</a>看看别人现在用的是哪个。
+                  这条地址连续探测全部失败，多半已经换过了 —— 去
+                  <Link href="/discuss">讨论区</Link>看看别人现在用的是哪个。
                 </div>
               ) : null}
               <UptimeBars probes={r.probes} />
@@ -101,27 +110,15 @@ export default async function HomePage() {
 
       <div className="section">
         <div className="section-head">
-          <h2>什么时段最稳</h2>
-          <span className="hint">过去 24 小时逐小时可用率 · 颜色越绿越稳</span>
-        </div>
-        <div className="card">
-          <Heatmap buckets={heatmap} />
-          <div className="faint" style={{ fontSize: 12, marginTop: 12 }}>
-            社区普遍反馈凌晨最流畅、下午到深夜最挤，这张图能帮你挑时间。绿色 ≥98% · 黄色 ≥88% · 红色 &lt;75%
-          </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-head">
-          <h2>用户实时反馈</h2>
+          <h2>你那边怎么样</h2>
           <span className="hint">
-            近 1 小时 {summary.total} 条 · 正常 {summary.ok} · 慢 {summary.slow} · 用不了 {summary.down}
+            近 1 小时 {summary.total} 条上报
+            {summary.total ? ` · 正常 ${summary.ok} · 慢 ${summary.slow} · 用不了 ${summary.down}` : ''}
           </span>
         </div>
         <div className="grid-2">
           <div className="card">
-            <h3>你那边现在怎么样？</h3>
+            <h3>花 10 秒报一条</h3>
             <p className="faint" style={{ fontSize: 12, marginTop: -2, marginBottom: 14 }}>
               官方没有状态页，你的这一票就是别人的参考。
             </p>
@@ -130,110 +127,35 @@ export default async function HomePage() {
           <div className="card">
             <h3>最新上报</h3>
             <ReportFeed reports={reports} />
-            <Link href="/report" className="btn ghost sm" style={{ marginTop: 12 }}>
-              查看全部上报
-            </Link>
+            <div style={{ paddingTop: 12, display: 'flex', gap: 8 }}>
+              <Link href="/discuss" className="btn ghost sm">
+                进讨论区
+              </Link>
+              <Link href="/report" className="btn ghost sm">
+                全部上报
+              </Link>
+            </div>
           </div>
         </div>
       </div>
 
       <div className="section">
-        <div className="section-head">
-          <h2>大家在聊什么</h2>
-          <span className="hint">官方没有社区，这里是用户自己凑出来的</span>
-        </div>
-        <div className="card" style={{ padding: '4px 20px 16px' }}>
-          {recentThreads.length === 0 ? (
-            <div className="faint" style={{ padding: '20px 0' }}>
-              还没有帖子。遇到问题的话，你正好可以当第一个。
-            </div>
-          ) : (
-            recentThreads.map((t) => (
-              <div key={t.id} className="thread-item">
-                <Link href={`/discuss/${t.id}`} className="thread-title">
-                  {t.title}
-                </Link>
-                <div className="report-meta">
-                  <span>{t.nick ?? '匿名'}</span>
-                  <span>·</span>
-                  <span>{fmtAgo(t.updatedAt)}</span>
-                  <span>·</span>
-                  <span>{t.replyCount} 条回复</span>
-                  {t.routeName ? <span className="tag">{t.routeName}</span> : null}
-                </div>
-              </div>
-            ))
-          )}
-          <div style={{ paddingTop: 14 }}>
-            <Link href="/discuss" className="btn ghost sm">
-              进讨论区
-            </Link>
-          </div>
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-head">
-          <h2>最近故障</h2>
-          <span className="hint">连续 15 分钟以上探测失败才会计入</span>
-        </div>
-        <div className="card">
-          {incidents.length === 0 ? (
-            <div className="faint">过去 24 小时没有持续故障，运气不错。</div>
-          ) : (
-            <table className="table">
-              <thead>
-                <tr>
-                  <th>开始时间</th>
-                  <th>线路</th>
-                  <th>分组</th>
-                  <th>持续</th>
-                  <th>表现</th>
-                </tr>
-              </thead>
-              <tbody>
-                {incidents.map((i) => (
-                  <tr key={i.id}>
-                    <td className="num">{fmtDateTime(i.startedAt)}</td>
-                    <td>{i.routeName}</td>
-                    <td>{i.groupName}</td>
-                    <td className="num">{fmtDuration(i.durationMs)}</td>
-                    <td>
-                      <span className="badge lv-down">
-                        <span className="dot lv-down" />
-                        {i.peakStatus} · {i.summary}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
-
-      <div className="section">
-        <div className="section-head">
-          <h2>配置不对？先别怀疑自己</h2>
-        </div>
-        <div className="grid-3">
-          <Link href="/check" className="card" style={{ color: 'inherit' }}>
-            <h3>配置自检 →</h3>
-            <div className="dim" style={{ fontSize: 12.5 }}>
-              填上地址和 key，三步验证到底是网络、鉴权还是上游的问题。key 不落库、不记日志。
-            </div>
+        <div className="card quick-links">
+          <Link href="/discuss">
+            <b>讨论区</b>
+            <span>问问别人是不是也这样 —— 一个人挂是配置，一群人挂是站点</span>
           </Link>
-          <Link href="/errors" className="card" style={{ color: 'inherit' }}>
-            <h3>错误码百科 →</h3>
-            <div className="dim" style={{ fontSize: 12.5 }}>
-              502 / 503 / 429 / 超时，以及「上游负载压力太大」这类报错原文，逐条给原因和解法。
-            </div>
+          <Link href="/check">
+            <b>配置自检</b>
+            <span>填地址和 key，三步分清是网络、鉴权还是上游的问题</span>
           </Link>
-          <Link href="/clients" className="card" style={{ color: 'inherit' }}>
-            <h3>客户端配置 →</h3>
-            <div className="dim" style={{ fontSize: 12.5 }}>
-              Cherry Studio、Cline、Cursor 等客户端的填法，重点是 base_url 到底要不要带 /v1。
-            </div>
+          <Link href="/guide">
+            <b>排障手册</b>
+            <span>报错对照表 + 各客户端 base_url 到底要不要带 /v1</span>
+          </Link>
+          <Link href="/status">
+            <b>详细看板</b>
+            <span>逐分组的可用率、延迟曲线、时段热力图和故障时间线</span>
           </Link>
         </div>
       </div>

@@ -28,17 +28,18 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: '请求格式不对' }, { status: 400 });
   }
 
-  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  let title = typeof body.title === 'string' ? body.title.trim() : '';
   const text = typeof body.body === 'string' ? body.body.trim() : '';
 
-  if (title.length < 4) {
-    return NextResponse.json({ error: '标题太短了，写清楚点别人才能帮上忙' }, { status: 400 });
+  // 标题不设长度限制：短标题（「502 了」「今天很卡」）本身就是有效信息，
+  // 以前卡在 4 个字起步，把最该被看见的一句话挡在了门外。
+  // 唯一还做的事是「留空时兜个底」—— 从正文首行取一句，
+  // 否则列表里会出现一条没有入口文字的帖子。
+  if (!title) {
+    title = text.split('\n')[0].slice(0, 60);
   }
-  if (title.length > 120) {
-    return NextResponse.json({ error: '标题太长了，控制在 120 字以内' }, { status: 400 });
-  }
-  if (text.length < 6) {
-    return NextResponse.json({ error: '正文太短了，至少说清楚现象' }, { status: 400 });
+  if (!text) {
+    return NextResponse.json({ error: '正文不能为空' }, { status: 400 });
   }
   if (text.length > 4000) {
     return NextResponse.json({ error: '正文太长了，控制在 4000 字以内' }, { status: 400 });
