@@ -152,3 +152,25 @@ curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/hea
 - `缺少 ANYROUTER_KEY 环境变量` → secret 没配
 - `回传结果：HTTP 503` → 服务端存储不可用，去查 `/api/health`
 - `回传结果：HTTP 401` → `INGEST_SECRET` 两边对不上
+
+> ⚠️ **别只看 workflow 的绿勾判断探测有没有效。**
+> 脚本只在「回传失败」时才退出非零 —— **探测本身全失败也会显示 success**。
+> 必须看日志里的 `汇总：x/y 成功` 那一行。
+
+> ⏳ **新建仓库的定时任务会延迟。**
+> `schedule` 不是推上去就立刻生效的，GitHub 对新仓库可能要等几十分钟到一小时才开始跑。
+> 期间 `workflow_dispatch`（手动触发）是好的。等不及就手动点，或者配个
+> [cron-job.org](https://cron-job.org) 之类的免费外部调度打 `repository_dispatch`。
+
+## 数据保留
+
+探测每 5 分钟一轮、每轮 12 条，一天约 3400 行、一年约 126 万行。
+Postgres 扛这个量级没问题（`probes(ts)` 上有索引，页面只查最近 24 小时），
+但**目前没有清理策略**。如果哪天觉得表太大，加一条定期删除即可：
+
+```sql
+delete from probes where ts < now() - interval '7 days';
+```
+
+放哪儿都行：Supabase 的 pg_cron、或者塞进 probe workflow 多跑一步。
+页面只用到 24 小时窗口，留 7 天足够排查问题了。
