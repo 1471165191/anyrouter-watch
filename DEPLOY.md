@@ -75,25 +75,53 @@ npx vercel --prod
 
 ## 部署后第一件事：验证数据库真的连上了
 
-打开 `https://<你的域名>/api/status`，看返回 JSON 里的 `source` 字段：
+打开 `https://<你的域名>/api/status`，看返回 JSON 里的 `source` 和 `dbOk` 两个字段：
 
-- `"source":"db"` → **成功**，探测数据和用户上报都是真的
-- `"source":"demo"` → 数据库没连上，页面顶部会显示「当前展示示例数据」
+| `source` | `dbOk` | 含义 | 该做什么 |
+| --- | --- | --- | --- |
+| `db` | `true` | **成功**，探测数据和用户上报都是真的 | 无 |
+| `demo` | `true` | 库是通的，只是还没有探测记录 | 等第一轮探测，或手动触发一次 workflow |
+| `demo` | `false` | **连不上库** | 看下面 |
 
-还是 `demo` 的话，去 Vercel 的 Functions 日志看 `[db] query failed:` 后面的原因。
+`source=demo` 且 `dbOk=false` 时，直接查运维自检端点，它会把三步分开报：
 
-> **为什么本机测不出来**：这台机器的 Clash 开了 fake-IP + TUN，会把 `*.supabase.co`
-> 解析成 `28.0.0.x` 假地址，本地连不上池化器（详见 README 的「本项目的 Supabase 配置」）。
-> Vercel 上没有这层代理，那里才是真实环境。
+```bash
+curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/health
+```
+
+- `dns` 为空 → 主机名解析不了（ref 写错了？）
+- `tcp.ok=false` → 端口连不上
+- `query.ok=false` → TCP 通了但认证/查询失败，看 `query.error`
+
+> **踩过的坑**：2026-09-22 部署后一直 `source=demo`，一开始误判成本机 Clash 代理的问题，
+> 实际是 `DATABASE_URL` 里的 Supabase ref 抄错了一个字符（`qqw`↔`qww`、`fe`↔`ef`）。
+> 从 Vercel 侧看到 `(ENOTFOUND) tenant/user postgres.<ref> not found` 才定位到。
+> 详见 README 的「本项目的 Supabase 配置」。
+
 
 ---
 
-## 已经替你做完的
+## 部署进度（2026-09-22 更新）
 
-- ✅ `git init` + 46 个文件已提交；`.env.local` / `_tools/` 已忽略，**密钥没进仓库**
+**已经做完的：**
+
+- ✅ GitHub 仓库 `1471165191/anyrouter-watch`（**public**）已创建并推送
+  - 选 public 不是随便定的：私有仓库的 Actions 免费额度是 2000 分钟/月，
+    而 5 分钟一次探测 ≈ 8600 次/月，会直接跑爆。公开仓库的 Actions 不限量。
+- ✅ Vercel 项目 `anyrouter-watch` 已创建并关联该仓库（production 分支 `main`）
+- ✅ Vercel 环境变量 `DATABASE_URL` / `INGEST_SECRET` 已写入（production / preview / development）
+- ✅ Supabase 6 张表已建好，RLS 已开；线上 `/api/health` 返回「数据库连接正常」
+- ✅ GitHub Actions secrets 已写入 `INGEST_URL` / `INGEST_SECRET`
+- ✅ 端到端验证过：`/api/ingest` 写入 → `/api/status` 读出 `source=db`（验证用的合成数据已删除）
+- ✅ 讨论区已可用，站长的欢迎帖已发出
 - ✅ `.gitattributes` 统一换行符（Windows 开发 / Linux 构建）
 - ✅ `npm run build` 用 Vercel 完全相同的命令跑通
-- ✅ Supabase 6 张表已建好，RLS 已开
+- ✅ `.env.local` / `_tools/` 已忽略，**密钥没进仓库**
+
+**还没做的：**
+
+- ⏳ **`ANYROUTER_KEY` 这个 secret 还没配** —— 探测脚本需要它才能跑。
+  没有它 workflow 会直接失败（脚本里 `if (!KEY) process.exit(1)`），站点会一直显示示例数据。
 - ⚠️ git 提交身份目前是占位的（`anyrouter-watch dev <dev@anyrouter-watch.local>`）。
   想换成你自己的：
 
@@ -103,10 +131,16 @@ npx vercel --prod
   git commit --amend --reset-author --no-edit
   ```
 
+- ⚠️ 本次用到的 GitHub PAT 和 Vercel token 都出现在对话记录里了，**用完请吊销**。
+
 ---
 
-## 需要你提供的
+## 怎么自己触发一次探测
 
-只有一样：**GitHub 仓库地址**。给我之后，推送、环境变量、Actions secrets 我都能接着做完。
+不用等定时任务，去 GitHub 仓库的 **Actions → probe → Run workflow** 手动跑一次。
+跑完刷新 `/api/status`，`source` 应该变成 `db`。
 
-或者你说一声走路线 B，那你只需要点一次 Vercel 登录授权。
+如果失败，先在 Actions 日志里看是哪一步：
+- `缺少 ANYROUTER_KEY 环境变量` → secret 没配
+- `回传结果：HTTP 503` → 服务端存储不可用，去查 `/api/health`
+- `回传结果：HTTP 401` → `INGEST_SECRET` 两边对不上

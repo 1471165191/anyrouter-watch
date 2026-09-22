@@ -12,11 +12,11 @@ export const metadata: Metadata = {
 };
 
 export default async function StatusPage() {
-  const { routes, level, source } = await getSiteStats();
+  const { routes, level, source, dbOk } = await getSiteStats();
 
   return (
     <div>
-      <DataSourceNotice source={source} />
+      <DataSourceNotice source={source} dbOk={dbOk} />
 
       <h1>详细看板</h1>
       <p className="sub">

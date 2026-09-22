@@ -8,7 +8,7 @@ export const dynamic = 'force-dynamic';
  * 开放数据接口。让别人也能把状态接进自己的脚本或机器人 —— 这是自然外链的来源之一。
  */
 export async function GET() {
-  const { routes, heatmap, level, uptime24h, source, lastProbeAt } = await getSiteStats();
+  const { routes, heatmap, level, uptime24h, source, dbOk, lastProbeAt } = await getSiteStats();
 
   return NextResponse.json(
     {
@@ -18,8 +18,11 @@ export async function GET() {
       lastProbeAt,
       level,
       uptime24h: Number(uptime24h.toFixed(4)),
-      // demo 表示数据库还没有数据，返回的是示例数据，请勿当真
+      // demo 表示返回的是示例数据，请勿当真。dbOk 进一步说明原因：
+      //   true  = 库是通的，只是还没有探测记录
+      //   false = 连不上库
       source,
+      dbOk,
       routes: routes.map((r) => ({
         id: r.route.id,
         name: r.route.name,
@@ -39,7 +42,12 @@ export async function GET() {
         })),
       })),
       hourly: heatmap,
-      note: source === 'demo' ? '当前为示例数据，尚未接入真实探测' : '非官方第三方观测数据，仅供参考',
+      note:
+        source === 'db'
+          ? '非官方第三方观测数据，仅供参考'
+          : dbOk
+            ? '数据库里还没有探测记录，返回的是示例数据'
+            : '数据库连不上，返回的是示例数据',
     },
     {
       headers: {

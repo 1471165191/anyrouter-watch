@@ -110,27 +110,52 @@ Actions 里手动触发一次 `probe` workflow 验证，之后每 5 分钟自动
 
 ## 本项目的 Supabase 配置
 
-数据库用的是 Supabase 项目 **`anyrouter-watch`**（Free 计划 / `ap-southeast-2` Sydney）。
+数据库用的是 Supabase 项目 **`anyrouter-watch`**（Free 计划 / `ap-southeast-2` Sydney），
+项目 ref 是 **`mghkaqxqqwlfjhseferj`**。
 
 - 建表不是跑 `npm run db:init`，而是**在面板的 SQL Editor 里执行 `db/schema.sql`**，
   并选择「Run and enable RLS」。6 张表都已建好。
 - `DATABASE_URL` 用的是 **Transaction pooler（6543）** —— serverless 每个请求都是短连接，
   直连会很快把连接数吃满。
 - 直连（`db.<ref>.supabase.co:5432`）只走 IPv6，IPv4 网络连不上，要额外买 IPv4 add-on。
+- 池化器主机是 `aws-0-ap-southeast-2.pooler.supabase.com`（注意是 **aws-0**，不是 aws-1）。
 
-> ⚠️ **本机代理的坑（重要，别重复踩）**
-> 这台机器的 Clash 开了 fake-IP + TUN，会把 `*.supabase.co` 解析成 `28.0.0.x` 这类假地址，
-> 结果是：
-> - `curl https://<ref>.supabase.co/...` → TLS 握手直接失败
-> - `pg` 连池化器 → 报 `(ENOTFOUND) tenant/user postgres.<ref> not found`
-> - **26 个区域主机名返回一模一样的错误** —— 说明 DNS 全被解析到了同一个错的地方
+> ⚠️ **2026-09-22 事故：ref 抄错了一个字符，排查绕了很久**
 >
-> 判断方法：`supabase.com` 能拿到真的 Let's Encrypt 证书，`*.supabase.co` 拿不到。
-> **这不是项目或连接串的问题，是代理规则的问题。**
-> 要么给 `*.supabase.co` / `*.pooler.supabase.com` 单独配好分流，要么别在本机连，
-> 直接部署到 Vercel 验证（Vercel 没有这层代理）。
+> 症状：`pg` 连池化器报 `(ENOTFOUND) tenant/user postgres.<ref> not found`，
+> 站点一直显示示例数据。
 >
-> 所以本地跑起来 `source` 是 `demo` 属于预期行为 —— 降级逻辑正常工作。
+> **当时误判成「本机 Clash 的 fake-IP 把 DNS 搞坏了」**，理由看起来还挺硬：
+> `*.supabase.co` 的 TLS 握手失败、26 个区域主机名返回一模一样的错误。
+> 但部署到 Vercel（没有代理）后**照样失败**，说明这个结论是错的。
+>
+> 真正的原因是 ref 抄错了 —— 正确 `mghkaqxqqwlfjhseferj`，
+> 误写成 `mghkaqxqwwlfjhesefrj`（`qqw`↔`qww`、`fe`↔`ef` 两处字符换位）。
+>
+> **一条命令就能分辨，别靠猜：**
+>
+> ```bash
+> # 真实存在的 ref 会解析出 IP；不存在的返回 NXDOMAIN(status 3)
+> curl -s "https://cloudflare-dns.com/dns-query?name=mghkaqxqqwlfjhseferj.supabase.co&type=A" \
+>   -H 'Accept: application/dns-json'
+> ```
+>
+> 另一个旁证：Supabase 面板的标签页标题**只在项目存在时才带项目名**。
+> 打开错 ref 时标题是 `SQL Editor | Supabase`，打开对的是
+> `SQL Editor | anyrouter-watch | 1471165191's Org | Supabase`。
+>
+> 结论：**改 `DATABASE_URL` 时从面板「Connect」对话框整串复制，不要手抄。**
+> 字符换位（`qqw`/`qww`、`fe`/`ef`）肉眼极难发现，而 Supabase 的 ref 恰好全由
+> 这类易混字符组成。
+>
+> 本机 Clash 的 fake-IP 确实存在（`*.supabase.co` 会被解析成 `28.0.0.x`），
+> 但那只是干扰项，不是这次的原因。绕开它的办法是走 Clash 的 HTTP CONNECT 隧道
+> （见技能 `clash-fakeip-bypass`）。
+
+> 💡 **排查工具：`/api/health`**
+> 需要 `x-ingest-secret` 请求头。它把 DNS → TCP → 查询 三步分开报，并列出库里的表，
+> 用来区分「连不上库」和「库里还没数据」—— 这两种情况以前在页面上表现完全一样。
+
 
 ---
 

@@ -17,7 +17,7 @@ const BANNER_TITLE = {
 } as const;
 
 export default async function HomePage() {
-  const { routes, heatmap, level, uptime24h, incidents, recommended, source, lastProbeAt } =
+  const { routes, heatmap, level, uptime24h, incidents, recommended, source, dbOk, lastProbeAt } =
     await getSiteStats();
   const { reports } = await loadReports(14);
   const summary = summarize(reports);
@@ -25,7 +25,7 @@ export default async function HomePage() {
 
   return (
     <div>
-      <DataSourceNotice source={source} />
+      <DataSourceNotice source={source} dbOk={dbOk} />
 
       <div className="banner">
         <div className="banner-main">

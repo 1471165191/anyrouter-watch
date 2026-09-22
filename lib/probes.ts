@@ -28,6 +28,15 @@ export interface ProbeLoad {
   map: ProbeMap;
   source: 'db' | 'demo';
   rows: number;
+  /**
+   * 数据库这一层本身是不是通的（查询有没有报错）。
+   *
+   * 为什么单独拎出来：source='demo' 有两种完全不同的成因 ——
+   *   ① 库是通的，只是还没有探测记录（正常，等第一次探测即可）
+   *   ② 库根本连不上（出事了，要去看 /api/health）
+   * 以前两者表现一模一样，排查时得靠猜。见 2026-09-22 那次 ref 抄错的事故。
+   */
+  dbOk: boolean;
 }
 
 export interface ProbeInput {
@@ -50,13 +59,15 @@ export async function loadProbes(hours = WINDOW_HOURS): Promise<ProbeLoad> {
     [since.toISOString()],
   );
 
+  // safeQuery 返回 null 就说明这一层没通（没配 DATABASE_URL，或者查询报错）
+  const dbOk = rows !== null;
   const map: ProbeMap = new Map();
 
   if (!rows || rows.length === 0) {
     for (const r of ROUTES) {
       for (const g of GROUPS) map.set(targetKey(r.id, g.id), demoProbesForTarget(r.id, g.id));
     }
-    return { map, source: 'demo', rows: 0 };
+    return { map, source: 'demo', rows: 0, dbOk };
   }
 
   for (const row of rows) {
@@ -75,7 +86,7 @@ export async function loadProbes(hours = WINDOW_HOURS): Promise<ProbeLoad> {
     });
   }
 
-  return { map, source: 'db', rows: rows.length };
+  return { map, source: 'db', rows: rows.length, dbOk };
 }
 
 /** 写入一批探测结果，供 /api/ingest 调用 */

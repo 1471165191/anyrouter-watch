@@ -24,12 +24,14 @@ export interface SiteStats {
   recommended: RouteStats;
   /** db = 真实探测数据，demo = 示例数据（数据库为空时的兜底） */
   source: 'db' | 'demo';
+  /** 数据库这一层是否可用。false 表示连不上库，而不是「还没数据」 */
+  dbOk: boolean;
   lastProbeAt: number;
   sampleRows: number;
 }
 
 export async function getSiteStats(): Promise<SiteStats> {
-  const { map, source, rows } = await loadProbes();
+  const { map, source, rows, dbOk } = await loadProbes();
   const routes = ROUTES.map((r) => buildRouteStats(r, map));
 
   return {
@@ -40,6 +42,7 @@ export async function getSiteStats(): Promise<SiteStats> {
     incidents: recentIncidents(routes, 8),
     recommended: recommendRoute(routes),
     source,
+    dbOk,
     lastProbeAt: Math.max(...routes.map((r) => r.lastProbeAt), 0),
     sampleRows: rows,
   };
