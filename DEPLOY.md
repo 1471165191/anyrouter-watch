@@ -111,7 +111,9 @@ curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/hea
 - ✅ Vercel 项目 `anyrouter-watch` 已创建并关联该仓库（production 分支 `main`）
 - ✅ Vercel 环境变量 `DATABASE_URL` / `INGEST_SECRET` 已写入（production / preview / development）
 - ✅ Supabase 6 张表已建好，RLS 已开；线上 `/api/health` 返回「数据库连接正常」
-- ✅ GitHub Actions secrets 已写入 `INGEST_URL` / `INGEST_SECRET`
+- ✅ GitHub Actions secrets 已写入 `INGEST_URL` / `INGEST_SECRET` / `ANYROUTER_KEY`
+- ✅ **线上探测已跑通**：12 个目标全部回传成功，`/api/status` 返回 `source=db`
+- ✅ 探测配置已按实测校正（分组走对应端点、模型名换成真实存在的、删除不存在的国产分组）
 - ✅ 端到端验证过：`/api/ingest` 写入 → `/api/status` 读出 `source=db`（验证用的合成数据已删除）
 - ✅ 讨论区已可用，站长的欢迎帖已发出
 - ✅ `.gitattributes` 统一换行符（Windows 开发 / Linux 构建）
@@ -120,8 +122,14 @@ curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/hea
 
 **还没做的：**
 
-- ⏳ **`ANYROUTER_KEY` 这个 secret 还没配** —— 探测脚本需要它才能跑。
-  没有它 workflow 会直接失败（脚本里 `if (!KEY) process.exit(1)`），站点会一直显示示例数据。
+- ⚠️ **线路清单待核实**。实测下来 4 条线路里只有「主站直连」真的在提供服务：
+  - 大陆优化 A → `404 page not found`（该地址不提供 `/v1`）
+  - 大陆优化 B → `403 Current user is in debt`（节点账号欠费）
+  - CDN 备用 → 连不上
+
+  这几条地址最初是从社区帖子抄的，需要确认是否还有效。
+  改 `lib/config.ts` 里的 `ROUTES` 和 `scripts/probe.mjs` 里的 `ROUTES`（两处要一致）。
+
 - ⚠️ git 提交身份目前是占位的（`anyrouter-watch dev <dev@anyrouter-watch.local>`）。
   想换成你自己的：
 

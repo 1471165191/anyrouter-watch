@@ -39,8 +39,21 @@
 
 - 数据库为空时，页面用示例数据填充（`lib/mock.ts`），并在顶部**明确标注**。
   这是刻意的：刚上线时库里没数据，空图表会让人以为站点坏了。
+  现在还会进一步区分「连不上库」和「库里还没数据」—— 见 `/api/status` 的 `dbOk` 字段。
 
-也就是说：**配好 `DATABASE_URL`、执行一次建表、跑一次探测，站点就是全真的。**
+**已经上线**：<https://anyrouter-watch.vercel.app>（GitHub 仓库 `1471165191/anyrouter-watch`，
+推送到 `main` 会自动部署）。当前探测数据是真的，所以状态页反映的是 AnyRouter 的真实状况。
+
+**待确认**：线路清单是从社区帖子抄的，实测下来只有「主站直连」是真的在提供服务：
+
+| 线路 | 实测 |
+|---|---|
+| 主站直连 `anyrouter.top` | 正常（当时上游过载，返回 429/500） |
+| 大陆优化 A `pmpjfbhq.cn-nb1.rainapp.top` | `404 page not found`，该地址不提供 `/v1` |
+| 大陆优化 B `a-ocnfniawgw.cn-shanghai.fcapp.run` | `403 Current user is in debt`，节点账号欠费 |
+| CDN 备用 `q.quuvv.cn` | 连不上 |
+
+也就是说「线路」这一维目前区分度很低。**需要确认这几条地址是否还有效、有没有新的。**
 
 ---
 
@@ -78,7 +91,34 @@ npm run db:init                # 建表，幂等，可重复执行
 ANYROUTER_KEY=sk-xxx node scripts/probe.mjs --dry
 ```
 
-16 个目标逐个打印结果。确认能跑通再往下走。
+12 个目标逐个打印结果。确认能跑通再往下走。
+
+> ⚠️ **换模型之前先看这里（2026-09-22 踩过大坑）**
+>
+> AnyRouter 不同模型族走的**接口格式不一样**，而且**模型名对了、端点不对，
+> 一样会返回 `404 当前 API 不支持所选模型`** —— 看起来像模型不存在，其实是打错了接口。
+> 当时照社区帖子抄的模型名（`gpt-4o-mini` / `o3-mini` / `deepseek-v3` / `qwen-max`）
+> **一个都不存在**，导致探测全 404、站点一直显示「线路大面积不可用」。
+>
+> 实测正确的组合：
+>
+> | 分组 | 端点 | 请求体关键字段 | 认证头 |
+> |---|---|---|---|
+> | Claude 系 | `POST /v1/messages` | `max_tokens` + `messages` | `x-api-key` + `anthropic-version` |
+> | GPT 系 | `POST /v1/responses` | `max_output_tokens` + `input` | `Authorization: Bearer` |
+> | Gemini 系 | `POST /v1/chat/completions` | `max_tokens` + `messages` | `Authorization: Bearer` |
+>
+> **改之前先核对真实模型列表**，别信社区帖子：
+>
+> ```bash
+> curl -s https://anyrouter.top/v1/models -H "Authorization: Bearer sk-xxx" | head -c 800
+> ```
+>
+> 该账号下实测只有 15 个模型，**没有任何国产模型**（所以 `domestic` 分组已删除）。
+>
+> 另外 `/v1/chat/completions` 返回的 `404 当前 API 不支持所选模型` 和
+> `500 当前模型 xxx 负载已经达到上限` 是**两回事**：
+> 前者是模型/端点配错了，后者是模型没问题、只是上游挤爆了 —— 后者才是站点该记录的信号。
 
 ### 3. 部署
 
