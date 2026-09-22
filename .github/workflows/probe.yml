@@ -6,6 +6,17 @@ on:
   schedule:
     - cron: '*/5 * * * *'
   workflow_dispatch:
+  # 备用触发口。
+  #
+  # GitHub 的 schedule 是「尽力而为」：高峰期可能延迟，负载极高时甚至直接丢弃。
+  # 而且**新建仓库的 schedule 往往要等几十分钟到一小时才开始生效**。
+  #
+  # 想更稳就用外部 cron 打这个口子（cron-job.org / Cloudflare Worker 都行，都免费）：
+  #   POST https://api.github.com/repos/1471165191/anyrouter-watch/dispatches
+  #   Authorization: Bearer <一个只有 repo 权限的细粒度 token>
+  #   { "event_type": "probe" }
+  repository_dispatch:
+    types: [probe]
 
 concurrency:
   group: probe
