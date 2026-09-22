@@ -6,19 +6,26 @@
 
 ---
 
-## 为什么是「线路」而不是「站点」
+## 关于「线路」
 
-调研社区反馈时发现的头号配置误区：**AnyRouter 有多条接入线路，而「要不要开代理」完全相反。**
+调研社区反馈时发现一个常见配置误区：**AnyRouter 可能有多条接入线路，而「要不要开代理」是相反的。**
+所以站点一开始是按 **线路 × 分组** 的矩阵来设计的，首页第一屏回答「现在该用哪条线路」。
 
-| 线路 | 地址 | 代理 |
+**但目前只有一条线路是真的。** 2026-09-22 把四条地址全部实测了一遍：
+
+| 线路 | 地址 | 实测结果 |
 |---|---|---|
-| 主站直连 | `https://anyrouter.top` | **必须科学上网** |
-| 大陆优化 A | `https://pmpjfbhq.cn-nb1.rainapp.top` | 免代理 |
-| 大陆优化 B | `https://a-ocnfniawgw.cn-shanghai.fcapp.run` | 免代理 |
-| CDN 备用 | `https://q.quuvv.cn` | 免代理 |
+| 主站直连 | `https://anyrouter.top` | ✅ 可用，**必须科学上网** |
+| 大陆优化 A | `https://pmpjfbhq.cn-nb1.rainapp.top` | ❌ `404 page not found` |
+| 大陆优化 B | `https://a-ocnfniawgw.cn-shanghai.fcapp.run` | ❌ `403 Current user is in debt` |
+| CDN 备用 | `https://q.quuvv.cn` | ❌ 连不上 |
 
-所以探测矩阵是 **线路 × 分组**（4×4 = 16 个目标），首页第一屏回答的就是「现在该用哪条线路」。
-线路地址定义在 `lib/config.ts`，会变，请定期核实。
+问题不只是「三条不通」，而是页面把它们当正经线路展示、还参与「推荐线路」评选，
+等于给用户指了三条死路。所以直接砍到只剩主站直连，探测矩阵从 4×4 降到 1×3。
+
+代码结构没变 —— 想加线路就往 `lib/config.ts` 的 `ROUTES` 里追加一项
+（`scripts/probe.mjs` 里有一份同名数组要同步改；`app/api/probe/route.ts` 直接读 config，不用改）。
+**加之前先用 `curl` 实测一次 `/v1/models`，别再抄社区帖子里的地址。**
 
 ---
 
@@ -29,9 +36,8 @@
 - 全部页面与交互
 - 探测数据链路：脚本探测 → 回传接口 → Postgres → 页面
 - 用户上报：写入数据库、按 IP 哈希限频、聚合统计
-- 讨论区：发帖 / 回复，可按线路筛选，同样走数据库 + 限频
+- 讨论区：发帖 / 回复，同样走数据库 + 限频
 - 配置自检：真的会请求你填的地址，三步验证并归责
-- 定时任务：GitHub Actions 每 5 分钟一次
 - 开放数据接口：`/api/status`
 - 数据库已建好：Supabase 项目 `anyrouter-watch`（Sydney），**6 张表全部启用 RLS**
 
@@ -44,16 +50,38 @@
 **已经上线**：<https://anyrouter-watch.vercel.app>（GitHub 仓库 `1471165191/anyrouter-watch`，
 推送到 `main` 会自动部署）。当前探测数据是真的，所以状态页反映的是 AnyRouter 的真实状况。
 
-**待确认**：线路清单是从社区帖子抄的，实测下来只有「主站直连」是真的在提供服务：
+**待办：配一个外部定时器。** GitHub Actions 的 `schedule` 实测不可靠
+（配了 5 分钟 cron，一个半小时触发 0 次），所以新增了 `/api/probe`，
+把「谁来定时触发」解耦出来。见 `DEPLOY.md` 的「打开定时探测」。
 
-| 线路 | 实测 |
-|---|---|
-| 主站直连 `anyrouter.top` | 正常（当时上游过载，返回 429/500） |
-| 大陆优化 A `pmpjfbhq.cn-nb1.rainapp.top` | `404 page not found`，该地址不提供 `/v1` |
-| 大陆优化 B `a-ocnfniawgw.cn-shanghai.fcapp.run` | `403 Current user is in debt`，节点账号欠费 |
-| CDN 备用 `q.quuvv.cn` | 连不上 |
+---
 
-也就是说「线路」这一维目前区分度很低。**需要确认这几条地址是否还有效、有没有新的。**
+## 实测记下来的几条反直觉结论
+
+这几条都是 2026-09-22 直接打接口打出来的，写在这里免得以后重新踩：
+
+1. **不同模型族走不同端点**，模型名对了但端点不对，一样报
+   `404 当前 API 不支持所选模型` —— 看着像模型不存在，其实是打错了接口。
+   Claude → `/v1/messages`，GPT → `/v1/responses`，其余 → `/v1/chat/completions`。
+
+2. **Claude 必须带 `anthropic-beta: context-1m-2025-08-07`**。
+   不带这个头，任何 Claude 模型都返回
+   `400 1m 上下文已经全量可用，请启用 1m 上下文后重试`（实测 3/3 稳定复现）；
+   带上之后才轮到上游说话。这条坑了很多用户，站点的错误码表和自检都专门讲了。
+
+3. **`/v1/models` 列表里有 ≠ 真的能调。**
+   - `gemini-2.5-flash` 不在列表里（只有 `pro`）
+   - `gpt-5-codex` 在列表里，但两个端点都回 404
+   - `claude-opus-4-6` 在列表里，服务端明说「已下线，请切换到 claude-opus-4-7」
+   所以模型名要以**实测打通**为准，不是以列表为准。
+
+4. **429 有两种，含义相反。**
+   `rate limit` 是你发太快（改客户端）；`Service Unavailable` 是渠道打满（只能等）。
+   这个站过载时返回的正是后者，一律归成限流会给出错误的建议。
+
+5. **站点官网整站挂了阿里云 WAF 的 JS 挑战**（`acw_sc__v2`），
+   任何路径都返回同一段反爬页面。所以别指望程序化读它的公告来拿线路地址，
+   拿不到；线路只能靠实测。
 
 ---
 
@@ -91,7 +119,7 @@ npm run db:init                # 建表，幂等，可重复执行
 ANYROUTER_KEY=sk-xxx node scripts/probe.mjs --dry
 ```
 
-12 个目标逐个打印结果。确认能跑通再往下走。
+3 个目标逐个打印结果。确认能跑通再往下走。
 
 > ⚠️ **换模型之前先看这里（2026-09-22 踩过大坑）**
 >
@@ -104,17 +132,23 @@ ANYROUTER_KEY=sk-xxx node scripts/probe.mjs --dry
 >
 > | 分组 | 端点 | 请求体关键字段 | 认证头 |
 > |---|---|---|---|
-> | Claude 系 | `POST /v1/messages` | `max_tokens` + `messages` | `x-api-key` + `anthropic-version` |
+> | Claude 系 | `POST /v1/messages` | `max_tokens` + `messages` | `x-api-key` + `anthropic-version` + **`anthropic-beta: context-1m-2025-08-07`** |
 > | GPT 系 | `POST /v1/responses` | `max_output_tokens` + `input` | `Authorization: Bearer` |
 > | Gemini 系 | `POST /v1/chat/completions` | `max_tokens` + `messages` | `Authorization: Bearer` |
 >
-> **改之前先核对真实模型列表**，别信社区帖子：
+> **Claude 那个 `anthropic-beta` 头不能省。** 不带它，所有 Claude 模型都返回
+> `400 1m 上下文已经全量可用，请启用 1m 上下文后重试`（实测 3/3 稳定复现），
+> 跟 key、余额、负载都无关。带上之后请求才真正打到上游。
+>
+> **改之前先核对真实模型列表，但别只看列表：**
 >
 > ```bash
 > curl -s https://anyrouter.top/v1/models -H "Authorization: Bearer sk-xxx" | head -c 800
 > ```
 >
-> 该账号下实测只有 15 个模型，**没有任何国产模型**（所以 `domestic` 分组已删除）。
+> 列表里有 ≠ 真的能调：`gemini-2.5-flash` 不在列表里、`gpt-5-codex` 在列表里却两个端点都 404、
+> `claude-opus-4-6` 在列表里但服务端说已下线。**以 `--dry` 实测打通为准。**
+> 该账号下没有任何国产模型，所以 `domestic` 分组已删除。
 >
 > 另外 `/v1/chat/completions` 返回的 `404 当前 API 不支持所选模型` 和
 > `500 当前模型 xxx 负载已经达到上限` 是**两回事**：
@@ -127,24 +161,32 @@ ANYROUTER_KEY=sk-xxx node scripts/probe.mjs --dry
 | 变量 | 说明 |
 |---|---|
 | `DATABASE_URL` | Postgres 连接串 |
-| `INGEST_SECRET` | 随机长字符串，回传接口的鉴权口令 |
+| `INGEST_SECRET` | 随机长字符串，探测接口的鉴权口令 |
+| `ANYROUTER_KEY` | 服务端探测用的 key |
 
 ### 4. 打开定时探测
 
-在 GitHub 仓库 Settings → Secrets 里加：
+**主路径**：配一个外部定时器，每 5 分钟打一次
 
-| Secret | 值 |
-|---|---|
-| `ANYROUTER_KEY` | 探测用的 key（**用自己账号，会消耗额度**） |
-| `INGEST_URL` | `https://你的域名/api/ingest` |
-| `INGEST_SECRET` | 与 Vercel 上一致 |
+```bash
+curl "https://你的域名/api/probe?secret=<你的 INGEST_SECRET>"
+```
 
-Actions 里手动触发一次 `probe` workflow 验证，之后每 5 分钟自动跑。
+`/api/probe` 自己完成「探测 + 落库」整条链路，不需要任何外部 runner。
+用 cron-job.org / UptimeRobot / Cloudflare Workers Cron 都行。
 
-> **为什么探测不放 Vercel Cron？**
-> Vercel Hobby 计划的定时任务一天只能触发一次，做不到 5 分钟粒度。
-> GitHub Actions 的 cron 最小间隔正好是 5 分钟，免费。
-> 代价是高峰期可能延迟几分钟，可以接受。要更准就换 Cloudflare Workers Cron（1 分钟粒度，也免费）。
+**备份路径**：GitHub Actions（仓库 Settings → Secrets 加
+`ANYROUTER_KEY` / `INGEST_URL` / `INGEST_SECRET`），Actions 里手动触发一次验证。
+
+> **为什么不只靠 GitHub Actions 的 schedule？**（2026-09-22 实测）
+> `probe.yml` 的 5 分钟 cron 推上去后，**一个半小时触发 0 次** ——
+> workflow 的 `state` 一直是 `active`、不报错、不告警，只能靠数 run 才发现没跑。
+> GitHub 的 schedule 是尽力而为，新仓库和高负载时段都会延迟甚至直接丢弃。
+> 对一个「每 5 分钟更新一次」的状态页来说这个不确定性不能接受，
+> 所以才加了 `/api/probe` 把触发解耦出来。
+>
+> **为什么不放 Vercel Cron？** Vercel Hobby 计划的定时任务一天只能触发一次，
+> 做不到 5 分钟粒度。
 
 ---
 
@@ -209,19 +251,21 @@ Actions 里手动触发一次 `probe` workflow 验证，之后每 5 分钟自动
 
 ```
 app/
-  page.tsx              首页：总览 + 线路推荐 + 时段热力图 + 上报入口 + 故障时间线
-  status/page.tsx       详细看板：分组 × 线路矩阵、各线路延迟趋势
-  report/page.tsx       用户上报：表单 + 汇总 + 全部上报流
-  discuss/page.tsx      讨论区：帖子列表 + 发帖，可按线路筛选
+  page.tsx              首页：状态横幅 + 线路状态 + 上报/讨论 + 快捷入口（只有 4 段）
+  status/page.tsx       详细看板：分组状态、时段热力图、可用率与延迟曲线、故障时间线
+  report/page.tsx       用户上报：表单 + 汇总 + 全部上报流（不在导航里，从首页/讨论区进）
+  discuss/page.tsx      讨论区：帖子列表 + 发帖
   discuss/[id]/page.tsx 帖子详情 + 回复
   check/page.tsx        配置自检：三步验证 + 常见坑
-  errors/page.tsx       错误码百科
-  clients/page.tsx      客户端配置教程
+  guide/page.tsx        排障手册：错误码对照表 + 客户端配置（折叠式）
+                        ← 由原 errors/ 与 clients/ 合并而来，旧地址 308 跳转
   api/status            开放数据接口（JSON）
+  api/probe             服务端探测（探测 + 落库一条龙，供外部定时器调用）
   api/reports           上报读写（含限频）
   api/threads           讨论区读写（含限频）
   api/diagnose          自检代理（Edge，key 不落库）
-  api/ingest            接收探测结果并写库
+  api/ingest            接收探测脚本回传的结果并写库
+  api/health            运维自检：DNS / TCP / 查询分段报
 components/
   Nav / viz / ReportForm / ReportFeed / DiagnosePanel / DataSourceNotice
   ThreadForm / ReplyForm
@@ -233,6 +277,9 @@ lib/
   aggregate.ts          纯聚合逻辑，无 IO
   stats.ts              页面统一取数入口
   mock.ts               示例数据生成器（仅兜底用）
+scripts/
+  probe.mjs             独立探测脚本（GitHub Actions 备份路径用）
+```
   store.ts              上报存储 + 限频
   discuss.ts            讨论区存储 + 限频
 db/schema.sql           建表语句（6 张表，含 RLS）
@@ -257,7 +304,7 @@ scripts/init-db.mjs     建表脚本
 全部表都开了 **RLS**。应用走 `DATABASE_URL`（postgres 用户）天然绕过 RLS，
 而 anon key 是公开的 —— 不开 RLS 等于把表直接敞开。以后要在浏览器端直连，再按需加 policy。
 
-数据量：4 条线路 × 4 个分组 × 每 5 分钟 ≈ **每天 4600 行**。免费额度能撑很久，但建议定期清理：
+数据量：1 条线路 × 3 个分组 × 每 5 分钟 ≈ **每天 860 行**。免费额度能撑很久，但建议定期清理：
 
 ```sql
 delete from probes where ts < now() - interval '30 days';
@@ -271,7 +318,7 @@ delete from probes where ts < now() - interval '30 days';
    以后加功能别破坏这一点。页面上也提供等价的 curl 命令，让用户可以选择完全不给 key。
 2. **数据库故障时宁可降级，不可白屏。** 所有取数走 `safeQuery`，失败退回示例数据并标注。
    但**写入失败不能假装成功** —— 上报会返回 503 并明确告诉用户没存上。
-3. **探测用自己的账号，保持低频。** 5 分钟一次、16 个目标已经够。别加频率。
+3. **探测用自己的账号，保持低频。** 5 分钟一次、3 个目标已经够。别加频率。
 4. **站名不要用官方名。** 现在叫「AnyRouter 观察站」，页脚明确写了非官方、无关联。这个口吻要一直保持。
 5. **讨论区只做「排障讨论」，不做内容社区。** 这一条改过：最早决定「社区不做」，
    后来发现用户真正缺的是「有没有人跟我一样」这个确认动作 —— 官方既没有状态页也没有群，
@@ -280,6 +327,10 @@ delete from probes where ts < now() - interval '30 days';
 6. **线路地址会变。** `lib/aggregate.ts` 里的 `likelyDead` 已经在区分「地址失效」和「临时故障」：
    所有分组都攒够样本、且窗口内一次都没成功，才判定失效并在页面上单独提示。
    判据放宽会让它乱报警，收紧则永远不触发 —— 改的时候想清楚。
+7. **不确定的线路地址宁可不写。** 2026-09-22 的教训：抄来三条错地址，页面照样
+   把它们当正经线路展示、还参与推荐评选，等于给用户指死路。写进 `ROUTES` 之前必须实测。
+8. **定时触发不能只依赖 GitHub schedule。** 它不报错、状态还是 active，但就是不跑。
+   改调度相关的东西时，一定要**数一下实际触发了多少次**，别只看配置在不在。
 
 ---
 
@@ -288,7 +339,8 @@ delete from probes where ts < now() - interval '30 days';
 - **部署后第一件事**：打开 `/api/status` 看 `source` 是不是 `db`。
   本机代理连不上 Supabase 池化器（见「本项目的 Supabase 配置」那一节），
   所以真实连接必须在 Vercel 上验证
-- 线路自动测速排序，把「当前最快线路」直接置顶
+- **配一个外部定时器打 `/api/probe`** —— 目前唯一还没闭环的一环，见 `DEPLOY.md`
+- 线路自动测速排序，把「当前最快线路」直接置顶（要等线路回到多条才有意义）
 - 探测与上报交叉验证：官方探测正常但用户大量报错时，提示「可能是局部问题」
 - 微信 / Telegram / Bark 故障推送
 - 把 `/api/status` 做成徽章，方便别人贴到自己的 README

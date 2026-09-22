@@ -40,21 +40,48 @@ git push -u origin main
 | 变量 | 值 | 说明 |
 |---|---|---|
 | `DATABASE_URL` | Supabase 的 Transaction pooler 连接串 | 值在 `.env.local` 里，直接复制 |
-| `INGEST_SECRET` | 与 `.env.local` 里一致 | 探测回传接口的鉴权口令 |
+| `INGEST_SECRET` | 与 `.env.local` 里一致 | 探测接口的鉴权口令 |
+| `ANYROUTER_KEY` | 你自己的 AnyRouter key | 服务端探测用，会消耗额度 |
 
-两个都要加到 **Production / Preview / Development** 三个环境。
+三个都要加到 **Production / Preview / Development** 三个环境。
 
 ### 4. 打开定时探测
 
-仓库 Settings → Secrets and variables → Actions，加：
+**推荐做法：让一个外部定时器打 `/api/probe`。**
 
-| Secret | 值 |
-|---|---|
-| `ANYROUTER_KEY` | 你自己的 AnyRouter key（探测会消耗额度） |
-| `INGEST_URL` | `https://<你的域名>/api/ingest` |
-| `INGEST_SECRET` | 与 Vercel 上一致 |
+```bash
+curl "https://<你的域名>/api/probe?secret=<你的 INGEST_SECRET>"
+```
 
-然后 Actions → probe → Run workflow 手动跑一次，确认回传成功。
+这个端点自己完成「探测 + 落库」整条链路，不依赖任何外部 runner。
+用 [cron-job.org](https://cron-job.org)（免费，1 分钟粒度）或 UptimeRobot
+建一个每 5 分钟的监控指向上面这个 URL 就行。
+
+> ⚠️ **为什么不默认用 GitHub Actions 的 schedule**（2026-09-22 实测）：
+> `probe.yml` 里配的 5 分钟 cron，推上去 **一个半小时内触发 0 次**
+> （`GET /repos/.../actions/runs?event=schedule` 的 `total_count` 是 0，
+> 而 workflow 的 `state` 一直是 `active`，不报错、不告警）。
+> GitHub 的 schedule 是尽力而为：新仓库、高负载时段会延迟甚至直接丢掉。
+> 对一个「每 5 分钟更新一次」的状态页来说，这个不确定性不能接受。
+>
+> 所以现在有两套触发，互不依赖：
+> - `/api/probe` + 外部定时器 —— **主路径**
+> - GitHub Actions workflow —— 备份，哪天 schedule 正常了也能用
+>
+> 备份路径需要三个 Actions secrets：`ANYROUTER_KEY` / `INGEST_URL`
+> （`https://<你的域名>/api/ingest`）/ `INGEST_SECRET`。
+> 配好之后 Actions → probe → Run workflow 手动跑一次确认。
+
+**怎么确认定时任务真的在跑？** 别只看绿勾，数 run 数量：
+
+```bash
+curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+  "https://api.github.com/repos/<owner>/<repo>/actions/runs?event=schedule" \
+  | grep total_count
+```
+
+`/api/probe` 这边则看探测记录的时间戳有没有每 5 分钟递增一次
+（`/status` 页最下面的「最后探测」）。
 
 ---
 
@@ -109,26 +136,22 @@ curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/hea
   - 选 public 不是随便定的：私有仓库的 Actions 免费额度是 2000 分钟/月，
     而 5 分钟一次探测 ≈ 8600 次/月，会直接跑爆。公开仓库的 Actions 不限量。
 - ✅ Vercel 项目 `anyrouter-watch` 已创建并关联该仓库（production 分支 `main`）
-- ✅ Vercel 环境变量 `DATABASE_URL` / `INGEST_SECRET` 已写入（production / preview / development）
+- ✅ Vercel 环境变量 `DATABASE_URL` / `INGEST_SECRET` / `ANYROUTER_KEY` 已写入
 - ✅ Supabase 6 张表已建好，RLS 已开；线上 `/api/health` 返回「数据库连接正常」
 - ✅ GitHub Actions secrets 已写入 `INGEST_URL` / `INGEST_SECRET` / `ANYROUTER_KEY`
-- ✅ **线上探测已跑通**：12 个目标全部回传成功，`/api/status` 返回 `source=db`
-- ✅ 探测配置已按实测校正（分组走对应端点、模型名换成真实存在的、删除不存在的国产分组）
+- ✅ **线上探测已跑通**：`/api/status` 返回 `source=db`、`dbOk=true`
 - ✅ 端到端验证过：`/api/ingest` 写入 → `/api/status` 读出 `source=db`（验证用的合成数据已删除）
 - ✅ 讨论区已可用，站长的欢迎帖已发出
 - ✅ `.gitattributes` 统一换行符（Windows 开发 / Linux 构建）
 - ✅ `npm run build` 用 Vercel 完全相同的命令跑通
 - ✅ `.env.local` / `_tools/` 已忽略，**密钥没进仓库**
+- ✅ **线路清单已收敛**：删掉三条实测失效的地址，只留主站直连（见下）
+- ✅ **新增 `/api/probe`**，把「谁来定时触发」从 GitHub Actions 解耦（见「打开定时探测」）
 
-**还没做的：**
+**还没做的 / 需要你决定的：**
 
-- ⚠️ **线路清单待核实**。实测下来 4 条线路里只有「主站直连」真的在提供服务：
-  - 大陆优化 A → `404 page not found`（该地址不提供 `/v1`）
-  - 大陆优化 B → `403 Current user is in debt`（节点账号欠费）
-  - CDN 备用 → 连不上
-
-  这几条地址最初是从社区帖子抄的，需要确认是否还有效。
-  改 `lib/config.ts` 里的 `ROUTES` 和 `scripts/probe.mjs` 里的 `ROUTES`（两处要一致）。
+- ⚠️ **配一个外部定时器打 `/api/probe`**。这是目前唯一还没闭环的一环 ——
+  没有它，站点不会有新数据。见上面「打开定时探测」。
 
 - ⚠️ git 提交身份目前是占位的（`anyrouter-watch dev <dev@anyrouter-watch.local>`）。
   想换成你自己的：
@@ -143,28 +166,71 @@ curl -H "x-ingest-secret: <你的 INGEST_SECRET>" https://<你的域名>/api/hea
 
 ---
 
+## 线路清单为什么只剩一条
+
+上一版抄了四条地址，实测只有第一条是真的：
+
+| 线路 | 地址 | 实测结果 |
+|---|---|---|
+| 主站直连 | `https://anyrouter.top` | ✅ 可用 |
+| 大陆优化 A | `https://pmpjfbhq.cn-nb1.rainapp.top` | ❌ `404 page not found` |
+| 大陆优化 B | `https://a-ocnfniawgw.cn-shanghai.fcapp.run` | ❌ `403 Current user is in debt` |
+| CDN 备用 | `https://q.quuvv.cn` | ❌ 连不上 |
+
+问题不只是「三条不通」，而是**页面把它们当正经线路展示、还参与「推荐线路」评选**，
+等于给用户指了三条死路。所以 2026-09-22 直接砍到只剩主站直连。
+
+要加回线路，改两处（必须一致）：
+
+- `lib/config.ts` 的 `ROUTES`
+- `scripts/probe.mjs` 的 `ROUTES`
+- （`app/api/probe/route.ts` 不用改，它直接读 `lib/config.ts`）
+
+加之前先用 `curl` 实测一次 `/v1/models` 能不能通，别再抄社区帖子里的地址。
+
+---
+
 ## 怎么自己触发一次探测
 
-不用等定时任务，去 GitHub 仓库的 **Actions → probe → Run workflow** 手动跑一次。
-跑完刷新 `/api/status`，`source` 应该变成 `db`。
+**最快的方式**（不用碰 GitHub）：
 
-如果失败，先在 Actions 日志里看是哪一步：
-- `缺少 ANYROUTER_KEY 环境变量` → secret 没配
-- `回传结果：HTTP 503` → 服务端存储不可用，去查 `/api/health`
-- `回传结果：HTTP 401` → `INGEST_SECRET` 两边对不上
+```bash
+curl "https://<你的域名>/api/probe?secret=<你的 INGEST_SECRET>"
+```
+
+返回 JSON 里有 `probed` / `succeeded` / `stored` 三个数，`stored` 等于 `probed`
+就说明探测和落库都成功了。跑完刷新 `/status` 就能看到新数据。
+
+也可以去 GitHub 仓库的 **Actions → probe → Run workflow** 手动跑一次。
+
+如果失败，先分清是哪一层：
+- `/api/probe` 返回 403 → `secret` 不对
+- `/api/probe` 返回 `ANYROUTER_KEY 未配置` → Vercel 环境变量没加，加完要 Redeploy
+- `/api/probe` 返回「探测成功但写库失败」→ 存储层的问题，去查 `/api/health`
+- Actions 日志里 `缺少 ANYROUTER_KEY 环境变量` → secret 没配
+- Actions 日志里 `回传结果：HTTP 503` → 服务端存储不可用，去查 `/api/health`
+- Actions 日志里 `回传结果：HTTP 401` → `INGEST_SECRET` 两边对不上
 
 > ⚠️ **别只看 workflow 的绿勾判断探测有没有效。**
 > 脚本只在「回传失败」时才退出非零 —— **探测本身全失败也会显示 success**。
 > 必须看日志里的 `汇总：x/y 成功` 那一行。
+> （`/api/probe` 没这个问题：它的返回体里直接带着 `succeeded`。）
 
-> ⏳ **新建仓库的定时任务会延迟。**
-> `schedule` 不是推上去就立刻生效的，GitHub 对新仓库可能要等几十分钟到一小时才开始跑。
-> 期间 `workflow_dispatch`（手动触发）是好的。等不及就手动点，或者配个
-> [cron-job.org](https://cron-job.org) 之类的免费外部调度打 `repository_dispatch`。
+> ⚠️ **别只看 `schedule` 配置存在就以为定时任务在跑。**
+> 2026-09-22 实测：cron 配了、workflow `state=active`、但一个半小时内
+> 触发 0 次。要确认得数 run：
+>
+> ```bash
+> curl -s -H "Authorization: Bearer $GITHUB_TOKEN" \
+>   "https://api.github.com/repos/<owner>/<repo>/actions/runs?event=schedule" \
+>   | grep total_count
+> ```
+>
+> 这就是为什么要加 `/api/probe` —— 把触发交给一个说得出话的定时器。
 
 ## 数据保留
 
-探测每 5 分钟一轮、每轮 12 条，一天约 3400 行、一年约 126 万行。
+探测每 5 分钟一轮、每轮 3 条（1 条线路 × 3 个分组），一天约 860 行、一年约 31 万行。
 Postgres 扛这个量级没问题（`probes(ts)` 上有索引，页面只查最近 24 小时），
 但**目前没有清理策略**。如果哪天觉得表太大，加一条定期删除即可：
 
@@ -174,3 +240,6 @@ delete from probes where ts < now() - interval '7 days';
 
 放哪儿都行：Supabase 的 pg_cron、或者塞进 probe workflow 多跑一步。
 页面只用到 24 小时窗口，留 7 天足够排查问题了。
+
+> 线路收敛到 1 条之后，探测目标从 12 个降到 3 个，写入量降到原来的四分之一。
+> 以后加回线路，这张账要跟着重算。
