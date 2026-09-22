@@ -1,0 +1,31 @@
+name: probe
+
+# 探测调度放在这里，而不是 Vercel Cron —— Vercel Hobby 计划一天只能触发一次。
+# 注意：GitHub Actions 的定时任务在高峰期可能延迟几分钟，这是免费的代价，可以接受。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: probe
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: 执行探测
+        run: node scripts/probe.mjs
+        env:
+          ANYROUTER_KEY: ${{ secrets.ANYROUTER_KEY }}
+          INGEST_URL: ${{ secrets.INGEST_URL }}
+          INGEST_SECRET: ${{ secrets.INGEST_SECRET }}
+          PROBE_REGION: github-actions
