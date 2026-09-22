@@ -218,7 +218,7 @@ export async function POST(req: Request) {
       detail: `请求 ${ep.label} 失败（${chat.err}）。如果 /models 能过但补全超时，通常是上游负载太高，换个时段再试。`,
       latencyMs: chat.ms,
     });
-    return NextResponse.json({ steps, conclusion: 'flaky', v1 });
+    return NextResponse.json({ steps, conclusion: 'flaky', v1, endpoint: ep.label });
   }
 
   if (!chat.res.ok) {
@@ -244,7 +244,7 @@ export async function POST(req: Request) {
         httpStatus: chat.res.status,
         latencyMs: chat.ms,
       });
-      return NextResponse.json({ steps, conclusion: 'model', v1, modelCount });
+      return NextResponse.json({ steps, conclusion: 'model', v1, modelCount, endpoint: ep.label });
     }
 
     const hint =
@@ -262,7 +262,7 @@ export async function POST(req: Request) {
       httpStatus: chat.res.status,
       latencyMs: chat.ms,
     });
-    return NextResponse.json({ steps, conclusion: 'upstream', v1 });
+    return NextResponse.json({ steps, conclusion: 'upstream', v1, endpoint: ep.label });
   }
 
   steps.push({

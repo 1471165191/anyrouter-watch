@@ -205,6 +205,14 @@ export default function DiagnosePanel() {
             </div>
           ))}
 
+          {result.endpoint ? (
+            <div className="hint" style={{ marginTop: 12 }}>
+              本次真实调用打的是 <code>{result.endpoint}</code> —— 端点按模型名自动选择，
+              Claude 走 <code>/v1/messages</code>、GPT 走 <code>/v1/responses</code>、
+              其余走 <code>/v1/chat/completions</code>。填到客户端里要跟着这个走。
+            </div>
+          ) : null}
+
           {tip ? (
             <div className={`alert ${tip.level}`} style={{ marginTop: 14 }}>
               <b>{tip.title}</b>
