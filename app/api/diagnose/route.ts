@@ -28,6 +28,52 @@ function normalizeBase(raw: string): { root: string; v1: string } {
   return { root, v1 };
 }
 
+/**
+ * 按模型名挑端点。
+ *
+ * 为什么必须这么做（2026-09-22 实测踩到的）：
+ *   AnyRouter 上不同模型族走的接口格式不一样，**模型名对了但端点不对，
+ *   一样会返回 `404 当前 API 不支持所选模型`** —— 看起来像模型不存在，
+ *   其实是打错了接口。如果自检一律打 /chat/completions，
+ *   用 Claude 或 GPT 模型的用户会被误判成「模型名写错了」，越查越远。
+ *
+ *   Claude  → POST /v1/messages         （Anthropic 格式，x-api-key 头）
+ *   GPT     → POST /v1/responses        （OpenAI 新格式，input 而非 messages）
+ *   其它    → POST /v1/chat/completions （OpenAI 经典格式）
+ */
+function pickEndpoint(model: string, apiKey: string): { path: string; label: string; headers: Record<string, string>; body: unknown } {
+  const m = model.toLowerCase();
+
+  if (m.startsWith('claude')) {
+    return {
+      path: '/messages',
+      label: '/v1/messages',
+      headers: {
+        'x-api-key': apiKey,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },
+    };
+  }
+
+  if (m.startsWith('gpt') || m.startsWith('o1') || m.startsWith('o3') || m.startsWith('o4')) {
+    return {
+      path: '/responses',
+      label: '/v1/responses',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: { model, input: 'ping', max_output_tokens: 16, stream: false },
+    };
+  }
+
+  return {
+    path: '/chat/completions',
+    label: '/v1/chat/completions',
+    headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+    body: { model, messages: [{ role: 'user', content: 'ping' }], max_tokens: 1, stream: false },
+  };
+}
+
 async function timed(url: string, init: RequestInit): Promise<{ res: Response | null; ms: number; err: string }> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
@@ -154,26 +200,22 @@ export async function POST(req: Request) {
     return NextResponse.json({ steps, conclusion: 'model', v1, modelCount });
   }
 
-  // 第三步：真打一次补全，这才算真的能用
-  const chat = await timed(`${v1}/chat/completions`, {
+  // 第三步：真打一次补全，这才算真的能用。
+  // 端点按模型族选 —— 选错了会拿到一个误导性的 404，见 pickEndpoint 的注释。
+  const target = model || 'gpt-4o-mini';
+  const ep = pickEndpoint(target, apiKey);
+
+  const chat = await timed(`${v1}${ep.path}`, {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: model || 'gpt-4o-mini',
-      messages: [{ role: 'user', content: 'ping' }],
-      max_tokens: 1,
-      stream: false,
-    }),
+    headers: ep.headers,
+    body: JSON.stringify(ep.body),
   });
 
   if (!chat.res) {
     steps.push({
       name: '真实调用',
       ok: false,
-      detail: `补全请求失败（${chat.err}）。如果 /models 能过但补全超时，通常是上游负载太高，换个时段再试。`,
+      detail: `请求 ${ep.label} 失败（${chat.err}）。如果 /models 能过但补全超时，通常是上游负载太高，换个时段再试。`,
       latencyMs: chat.ms,
     });
     return NextResponse.json({ steps, conclusion: 'flaky', v1 });
@@ -182,11 +224,29 @@ export async function POST(req: Request) {
   if (!chat.res.ok) {
     let msg = '';
     try {
-      const errBody = (await chat.res.json()) as { error?: { message?: string }; message?: string };
-      msg = errBody.error?.message ?? errBody.message ?? '';
+      const errBody = (await chat.res.json()) as { error?: { message?: string } | string; message?: string };
+      msg =
+        typeof errBody.error === 'string'
+          ? errBody.error
+          : (errBody.error?.message ?? errBody.message ?? '');
     } catch {
       /* 忽略解析失败 */
     }
+
+    // 「不支持所选模型」要单独认出来 —— 它的真实含义通常是「端点选错了」，
+    // 而不是「这个模型不存在」。报成后者会让人一直在模型名上绕。
+    const unsupported = /不支持所选模型/.test(msg);
+    if (unsupported) {
+      steps.push({
+        name: '真实调用',
+        ok: false,
+        detail: `HTTP ${chat.res.status} — ${msg.slice(0, 160)}。这类站不同模型族走的端点不一样：Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions。本次打的是 ${ep.label}。换对端点再试，别急着改模型名。`,
+        httpStatus: chat.res.status,
+        latencyMs: chat.ms,
+      });
+      return NextResponse.json({ steps, conclusion: 'model', v1, modelCount });
+    }
+
     const hint =
       chat.res.status === 429
         ? '触发限流，等一会儿或降低频率。'
@@ -208,10 +268,10 @@ export async function POST(req: Request) {
   steps.push({
     name: '真实调用',
     ok: true,
-    detail: `补全成功，往返 ${chat.ms}ms。你的配置没问题，可以正常用。`,
+    detail: `通过 ${ep.label} 补全成功，往返 ${chat.ms}ms。你的配置没问题，可以正常用。`,
     httpStatus: chat.res.status,
     latencyMs: chat.ms,
   });
 
-  return NextResponse.json({ steps, conclusion: 'ok', v1, modelCount });
+  return NextResponse.json({ steps, conclusion: 'ok', v1, modelCount, endpoint: ep.label });
 }

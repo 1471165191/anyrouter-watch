@@ -118,7 +118,7 @@ client = OpenAI(
 )
 
 resp = client.chat.completions.create(
-    model="gpt-4o-mini",
+    model="gemini-2.5-flash",   # 走 /v1/chat/completions 的模型
     messages=[{"role": "user", "content": "ping"}],
     max_tokens=16,
 )
@@ -146,7 +146,7 @@ const client = new OpenAI({
 });
 
 const resp = await client.chat.completions.create({
-  model: "gpt-4o-mini",
+  model: "gemini-2.5-flash", // 走 /v1/chat/completions 的模型
   messages: [{ role: "user", content: "ping" }],
   max_tokens: 16,
 });

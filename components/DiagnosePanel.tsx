@@ -15,6 +15,8 @@ interface DiagResponse {
   steps: StepResult[];
   conclusion?: string;
   v1?: string;
+  /** 实际探测用的端点，例如 /v1/messages。不同模型族端点不同 */
+  endpoint?: string;
   error?: string;
 }
 
@@ -36,8 +38,8 @@ const CONCLUSION_TIP: Record<string, { level: 'ok' | 'warn' | 'bad'; title: stri
   },
   model: {
     level: 'bad',
-    title: '卡在第三步：模型名不对',
-    body: 'key 是好的，但这个模型名在列表里找不到。去站内模型列表里复制准确的名字，注意大小写和日期后缀。',
+    title: '卡在第三步：模型名或端点不对',
+    body: 'key 是好的，但这个模型走不通。两种可能：一是模型名在列表里找不到（去站内模型列表复制准确的名字，注意大小写和日期后缀）；二是端点选错了 —— 这类站 Claude 走 /v1/messages、GPT 走 /v1/responses、其余走 /v1/chat/completions，用错了同样报「不支持所选模型」。上面每一步的详情里写了本次实际打的地址，照着改。',
   },
   upstream: {
     level: 'warn',
@@ -87,10 +89,29 @@ export default function DiagnosePanel() {
     ? baseUrl.trim().replace(/\/+$/, '')
     : `${baseUrl.trim().replace(/\/+$/, '')}/v1`);
 
-  const curl = `curl ${v1}/chat/completions \\
+  // 手动验证用的 curl 也要按模型族换端点 —— 否则用户照着这条命令敲，
+  // 明明配置是对的也会拿到「不支持所选模型」，反而被带偏。
+  const defaultModel = 'gemini-2.5-flash';
+  const used = (model || defaultModel).toLowerCase();
+  const isClaude = used.startsWith('claude');
+  const isGpt = used.startsWith('gpt') || /^o[134]/.test(used);
+  const curlModel = model || defaultModel;
+
+  const curl = isClaude
+    ? `curl ${v1}/messages \\
+  -H "x-api-key: $ANYROUTER_KEY" \\
+  -H "anthropic-version: 2023-06-01" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${curlModel}","max_tokens":1,"messages":[{"role":"user","content":"ping"}]}'`
+    : isGpt
+      ? `curl ${v1}/responses \\
   -H "Authorization: Bearer $ANYROUTER_KEY" \\
   -H "Content-Type: application/json" \\
-  -d '{"model":"${model || 'gpt-4o-mini'}","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'`;
+  -d '{"model":"${curlModel}","input":"ping","max_output_tokens":16}'`
+      : `curl ${v1}/chat/completions \\
+  -H "Authorization: Bearer $ANYROUTER_KEY" \\
+  -H "Content-Type: application/json" \\
+  -d '{"model":"${curlModel}","messages":[{"role":"user","content":"ping"}],"max_tokens":1}'`;
 
   const tip = result?.conclusion ? CONCLUSION_TIP[result.conclusion] : null;
 
