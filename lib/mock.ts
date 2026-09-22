@@ -24,7 +24,6 @@ const GROUP_BIAS: Record<string, number> = {
   claude: 0.05,
   gpt: 0,
   gemini: 0.02,
-  domestic: 0,
 };
 
 function hash(n: number): number {

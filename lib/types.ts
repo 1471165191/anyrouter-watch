@@ -25,6 +25,17 @@ export interface GroupDef {
   id: string;
   name: string;
   desc: string;
+  /**
+   * 这个分组要打哪个端点。
+   *
+   * 踩过的坑：AnyRouter 不同模型族走的接口格式不一样，模型名对了但端点不对，
+   * 一样会返回 `404 当前 API 不支持所选模型` —— 看起来像模型不存在，其实是打错了接口。
+   *   chat      → POST /v1/chat/completions（OpenAI 经典格式）
+   *   messages  → POST /v1/messages（Anthropic 格式，Claude 系必须走这个）
+   *   responses → POST /v1/responses（OpenAI 新格式，gpt-6-astra 这类只认这个）
+   */
+  api: 'chat' | 'messages' | 'responses';
+  /** 候选探测模型，按顺序取第一个；列在这里的都必须是该账号真实可用的 */
   models: string[];
 }
 

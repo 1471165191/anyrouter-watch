@@ -12,6 +12,15 @@
  * 本地只看结果不回传：
  *   ANYROUTER_KEY=sk-xxx node scripts/probe.mjs --dry
  *
+ * ⚠️ 端点格式很关键（2026-09-22 踩过）：
+ *   AnyRouter 不同模型族走的接口不一样。**模型名对了但端点不对，同样返回
+ *   `404 当前 API 不支持所选模型`** —— 看起来像模型不存在，其实是打错了接口。
+ *   实测：
+ *     Claude  → POST /v1/messages          （Anthropic 格式，x-api-key 头）
+ *     GPT     → POST /v1/responses         （OpenAI 新格式，input 而不是 messages）
+ *     Gemini  → POST /v1/chat/completions  （OpenAI 经典格式）
+ *   改模型前先用 `GET /v1/models` 核对一遍，别再照抄社区帖子里的模型名。
+ *
  * 注意：探测用的是你自己的账号和额度，保持低频，别给人家添负担。
  */
 
@@ -28,11 +37,12 @@ const ROUTES = [
   { id: 'cdn', name: 'CDN 备用', baseUrl: 'https://q.quuvv.cn' },
 ];
 
+// 每个分组只用第一个模型探测，控制请求量。
+// 候选写在数组里是为了留个换模型的余地，不是每个都发。
 const GROUPS = [
-  { id: 'claude', model: 'claude-3-5-haiku-20241022' },
-  { id: 'gpt', model: 'gpt-4o-mini' },
-  { id: 'gemini', model: 'gemini-2.5-flash' },
-  { id: 'domestic', model: 'deepseek-v3' },
+  { id: 'claude', api: 'messages', models: ['claude-3-5-haiku-20241022'] },
+  { id: 'gpt', api: 'responses', models: ['gpt-6-astra'] },
+  { id: 'gemini', api: 'chat', models: ['gemini-2.5-flash'] },
 ];
 
 if (!KEY) {
@@ -46,18 +56,54 @@ function normalize(baseUrl) {
 }
 
 function classify(status, text) {
+  // 欠费要单独认出来 —— 它是「这条线路暂时别用了」，不是普通的鉴权失败
+  if (/in debt|欠费/i.test(text)) return 'debt';
   if (status === 401 || status === 403) return 'auth';
   if (status === 404) return 'not_found';
   if (status === 429) return 'rate_limit';
   if (status === 502) return 'bad_gateway';
   if (status === 504) return 'timeout';
   if (status >= 500) return 'overload';
-  if (/负载|overload/i.test(text)) return 'overload';
+  if (/负载|overload|unavailable/i.test(text)) return 'overload';
   return 'unknown';
 }
 
+/** 按分组声明的 api 格式，构造这次探测的路径 / 请求头 / 请求体 */
+function buildRequest(api, model) {
+  if (api === 'messages') {
+    return {
+      path: '/messages',
+      headers: {
+        'x-api-key': KEY,
+        'anthropic-version': '2023-06-01',
+        'Content-Type': 'application/json',
+      },
+      body: { model, max_tokens: 1, messages: [{ role: 'user', content: 'ping' }] },
+    };
+  }
+  if (api === 'responses') {
+    return {
+      path: '/responses',
+      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+      body: { model, input: 'ping', max_output_tokens: 16, stream: false },
+    };
+  }
+  return {
+    path: '/chat/completions',
+    headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
+    body: {
+      model,
+      messages: [{ role: 'user', content: 'ping' }],
+      max_tokens: 1,
+      stream: false,
+    },
+  };
+}
+
 async function probe(route, group) {
-  const url = `${normalize(route.baseUrl)}/chat/completions`;
+  const model = group.models[0];
+  const { path, headers, body } = buildRequest(group.api, model);
+  const url = `${normalize(route.baseUrl)}${path}`;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
   const t0 = Date.now();
@@ -65,13 +111,8 @@ async function probe(route, group) {
     const res = await fetch(url, {
       method: 'POST',
       signal: ctrl.signal,
-      headers: { Authorization: `Bearer ${KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        model: group.model,
-        messages: [{ role: 'user', content: 'ping' }],
-        max_tokens: 1,
-        stream: false,
-      }),
+      headers,
+      body: JSON.stringify(body),
     });
     const latencyMs = Date.now() - t0;
     let text = '';

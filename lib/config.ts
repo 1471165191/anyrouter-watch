@@ -45,30 +45,45 @@ export const ROUTES: RouteDef[] = [
   },
 ];
 
+/**
+ * 分组配置。
+ *
+ * ⚠️ 2026-09-22 全部重写过一遍。之前那版是从社区帖子抄的模型名，
+ * 实测**一个都不存在**（`gpt-4o` / `gpt-4o-mini` / `o3-mini` / `deepseek-v3` / `qwen-max`
+ * 都不在 `/v1/models` 返回的列表里），导致探测全是 404，站点一直显示「线路大面积不可用」。
+ *
+ * 现在的依据是 `GET /v1/models` 的真实返回（该账号下 15 个模型），
+ * 并且按模型族选对了端点 —— 见 `GroupDef.api` 的注释。
+ *
+ * 另外：**该账号下没有任何国产模型**（DeepSeek / Qwen / GLM 等一个都没有），
+ * 所以原来的 `domestic` 分组已删除。如果以后站点上了国产模型，照着下面的格式加回来即可。
+ */
 export const GROUPS: GroupDef[] = [
   {
     id: 'claude',
     name: 'Claude 系列',
-    desc: 'Anthropic 全系',
-    models: ['claude-sonnet-4-20250514', 'claude-opus-4-1-20250805', 'claude-3-5-haiku-20241022'],
+    desc: 'Anthropic 全系，走 /v1/messages',
+    api: 'messages',
+    models: [
+      'claude-3-5-haiku-20241022',
+      'claude-haiku-4-5-20251001',
+      'claude-sonnet-4-5-20250929',
+      'claude-opus-4-5-20251101',
+    ],
   },
   {
     id: 'gpt',
     name: 'GPT 系列',
-    desc: 'OpenAI 全系',
-    models: ['gpt-4o', 'gpt-4o-mini', 'o3-mini'],
+    desc: 'OpenAI 全系，走 /v1/responses',
+    api: 'responses',
+    models: ['gpt-6-astra', 'gpt-5-codex'],
   },
   {
     id: 'gemini',
     name: 'Gemini 系列',
-    desc: 'Google 全系',
-    models: ['gemini-2.5-pro', 'gemini-2.5-flash'],
-  },
-  {
-    id: 'domestic',
-    name: '国产模型',
-    desc: 'DeepSeek / Qwen 等',
-    models: ['deepseek-v3', 'qwen-max'],
+    desc: 'Google 全系，走 /v1/chat/completions',
+    api: 'chat',
+    models: ['gemini-2.5-flash', 'gemini-2.5-pro'],
   },
 ];
 
@@ -88,6 +103,7 @@ export const ERROR_LABELS: Record<string, string> = {
   rate_limit: '429 触发限流',
   timeout: '504 上游超时',
   auth: '401 鉴权失败',
+  debt: '该线路的账号欠费了',
   not_found: '404 路径或模型不存在',
   network: '连不上服务器',
 };
